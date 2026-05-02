@@ -4,6 +4,7 @@ import arc.*;
 import arc.struct.*;
 import arc.util.*;
 import java.util.Arrays;
+import java.util.Objects;
 import mindustry.*;
 import mindustry.game.EventType.*;
 import mindustry.gen.*;
@@ -34,7 +35,7 @@ public class SiliconDevilUnitBuildMod extends Mod {
     private static final float SCAN_INTERVAL = 5.0f;
 
     /** Maximum number of blocks to encode per processor. */
-    private static final int MAX_BLOCKS_PER_PROCESSOR = 10;
+    private static final int MAX_BLOCKS_PER_PROCESSOR = 20;
 
     /** Prefix of processor code (must be present). */
     private static final String CODE_PREFIX = "print \"SILICONDEVIL UNIT BUILD MOD\"\n"
@@ -136,10 +137,16 @@ public class SiliconDevilUnitBuildMod extends Mod {
     /** Applies config to a built block only once. */
     private void applyConfigOnce(BuildPlan plan) {
         if (plan.config == null) return;
-        int key = plan.x * 10000 + plan.y; // simple hash
+        int key = plan.x * 10000 + plan.y;
         if (appliedConfigs.contains(key)) return;
         Tile tile = Vars.world.tile(plan.x, plan.y);
         if (tile != null && tile.build != null && tile.build.block == plan.block) {
+            Object currentConfig = tile.build.config();
+            if (Objects.equals(currentConfig, plan.config)) {
+                Log.debug("Block at @,@ already has correct config, skipping.", plan.x, plan.y);
+                appliedConfigs.add(key);
+                return;
+            }
             Call.tileConfig(null, tile.build, plan.config);
             Log.info("Applied config for block at @,@", plan.x, plan.y);
             appliedConfigs.add(key);
@@ -151,63 +158,47 @@ public class SiliconDevilUnitBuildMod extends Mod {
         Seq<BuildPlan> queue = getPlayerBuildQueue();
         IntMap<Seq<BuildPlan>> newAssignments = new IntMap<>();
         
-        // Track which plans are already assigned to processors (to avoid double assignment)
         Seq<BuildPlan> unassignedPlans = new Seq<>(queue);
         
-        // First, check existing assignments: keep if still valid (plan still in queue and not completed)
         for (IntMap.Entry<LogicBuild> entry : processorsWithString) {
             int pid = entry.key;
             LogicBuild processor = entry.value;
-            Seq<BuildPlan> oldPlans = assignedPlans.get(pid);
-            Seq<BuildPlan> keptPlans = new Seq<>();
-            int completedCount = 0;
+            Seq<BuildPlan> oldBatch = assignedPlans.get(pid);
             
-            if (oldPlans != null) {
-                for (BuildPlan oldPlan : oldPlans) {
-                    if (oldPlan == null) continue;
-                    
-                    if (isPlanCompleted(oldPlan)) {
-                        // Plan completed: keep in batch but mark as completed
-                        keptPlans.add(oldPlan);
-                        completedCount++;
-                        // Apply config once (if any)
-                        applyConfigOnce(oldPlan);
-                    } else if (queue.contains(oldPlan)) {
-                        // Plan still pending and in queue
-                        keptPlans.add(oldPlan);
-                        unassignedPlans.remove(oldPlan);
-                    } else {
-                        // Plan not in queue and not completed (cancelled or removed) – discard
+            // Check if the current batch is fully resolved:
+            // all plans are either built or no longer in the player's queue
+            boolean batchResolved = true;
+            if (oldBatch != null && oldBatch.size > 0) {
+                for (BuildPlan plan : oldBatch) {
+                    if (plan == null) continue;
+                    if (!isPlanCompleted(plan) && queue.contains(plan)) {
+                        batchResolved = false;
+                        break;
                     }
                 }
             }
             
-            // If all old plans are completed, clear the batch and allow new assignments
-            if (oldPlans != null && completedCount == oldPlans.size) {
-                keptPlans.clear();
-                // Processor becomes idle, we will assign new plans below
+            if (!batchResolved) {
+                newAssignments.put(pid, oldBatch);
+                if (oldBatch != null) {
+                    for (BuildPlan plan : oldBatch) {
+                        if (plan != null) unassignedPlans.remove(plan);
+                    }
+                }
+                continue;
             }
             
-            // Fill remaining slots with new plans from unassigned queue
-            int remainingSlots = MAX_BLOCKS_PER_PROCESSOR - keptPlans.size;
-            for (int i = 0; i < remainingSlots && unassignedPlans.size > 0; i++) {
-                BuildPlan newPlan = unassignedPlans.pop();
-                keptPlans.add(newPlan);
+            // Batch is resolved — assign a fresh batch from the end of the queue
+            Seq<BuildPlan> newBatch = new Seq<>();
+            int slots = Math.min(MAX_BLOCKS_PER_PROCESSOR, unassignedPlans.size);
+            for (int i = 0; i < slots; i++) {
+                newBatch.add(unassignedPlans.pop());
             }
             
-            // If no plans kept and no new plans, assign empty list (idle)
-            if (keptPlans.size == 0) {
-                newAssignments.put(pid, new Seq<>());
-                // Update processor code to idle (empty list)
-                updateProcessorCodeMultiple(processor, new Seq<>());
-            } else {
-                newAssignments.put(pid, keptPlans);
-                // Update processor code with keptPlans (only if batch changed)
-                updateProcessorCodeMultiple(processor, keptPlans);
-            }
+            newAssignments.put(pid, newBatch);
+            updateProcessorCodeMultiple(processor, newBatch);
         }
         
-        // Update assignments map
         assignedPlans = newAssignments;
     }
     

@@ -13,3 +13,5 @@ version: 1.0
 minGameVersion: 154
 
 java: true
+
+hidden: true

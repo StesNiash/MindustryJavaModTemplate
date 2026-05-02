@@ -1,23 +1,15 @@
-#the mod name as displayed in-game
-displayName: "Java Mod Template"
+displayName: "SiliconDevil Unit Build Mod"
 
-#the internal name of your mod
-name: "example-java-mod"
+name: "silicondevil-unit-build-mod"
 
-#your name
-author: "You"
+author: "SiliconDevil"
 
-#the fully qualified main class of the mod
-main: "example.ExampleJavaMod"
+main: "silicondevil.SiliconDevilUnitBuildMod"
 
-#the mod description as seen in the mod dialog
-description: "A Mindustry Java mod template."
+description: "A mod that enables units to build structures from the player's build queue using logic processors."
 
-#the mod version
 version: 1.0
 
-#the minimum game build required to run this mod
 minGameVersion: 154
 
-#this is a java mod
 java: true

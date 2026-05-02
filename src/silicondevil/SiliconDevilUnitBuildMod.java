@@ -27,6 +27,10 @@ public class SiliconDevilUnitBuildMod extends Mod {
     private IntMap<byte[]> lastConfigs = new IntMap<>();
     /** Map of processor IDs to last update time (for cooldown). */
     private IntMap<Long> lastUpdateTime = new IntMap<>();
+    /** Queue of blocks awaiting config application (rate-limited). */
+    private Seq<BuildPlan> configQueue = new Seq<>();
+    /** Whether the config worker is currently running. */
+    private boolean configWorkerRunning = false;
     
     /** The target string to search for in processor code. */
     private static final String TARGET_STRING = "print \"SILICONDEVIL UNIT BUILD MOD\"";
@@ -36,6 +40,9 @@ public class SiliconDevilUnitBuildMod extends Mod {
 
     /** Maximum number of blocks to encode per processor. */
     private static final int MAX_BLOCKS_PER_PROCESSOR = 20;
+
+    /** Minimum delay in seconds between consecutive config applications. */
+    private static final float CONFIG_INTERVAL = 0.7f;
 
     /** Prefix of processor code (must be present). */
     private static final String CODE_PREFIX = "print \"SILICONDEVIL UNIT BUILD MOD\"\n"
@@ -101,13 +108,7 @@ public class SiliconDevilUnitBuildMod extends Mod {
             }
         });
         
-        // Replace old map with new results
         processorsWithString = newMap;
-        
-        // Optional logging
-        if (newMap.size > 0) {
-            Log.info("Found @ processors with target string.", newMap.size);
-        }
     }
     
     /** Retrieves the player's current build queue. Returns empty seq if player is dead or not a builder. */
@@ -134,7 +135,7 @@ public class SiliconDevilUnitBuildMod extends Mod {
         return building != null && building.block == plan.block;
     }
 
-    /** Applies config to a built block only once. */
+    /** Checks if a built block needs config and queues it for rate-limited application. */
     private void applyConfigOnce(BuildPlan plan) {
         if (plan.config == null) return;
         int key = plan.x * 10000 + plan.y;
@@ -143,14 +144,37 @@ public class SiliconDevilUnitBuildMod extends Mod {
         if (tile != null && tile.build != null && tile.build.block == plan.block) {
             Object currentConfig = tile.build.config();
             if (Objects.equals(currentConfig, plan.config)) {
-                Log.debug("Block at @,@ already has correct config, skipping.", plan.x, plan.y);
                 appliedConfigs.add(key);
                 return;
             }
-            Call.tileConfig(null, tile.build, plan.config);
-            Log.info("Applied config for block at @,@", plan.x, plan.y);
             appliedConfigs.add(key);
+            configQueue.insert(0, plan);
+            startConfigWorker();
         }
+    }
+
+    /** Starts the config worker if not already running. */
+    private void startConfigWorker() {
+        if (configWorkerRunning) return;
+        configWorkerRunning = true;
+        processNextConfig();
+    }
+
+    /** Processes the next item from the config queue with a delay between each. */
+    private void processNextConfig() {
+        if (configQueue.size == 0) {
+            configWorkerRunning = false;
+            return;
+        }
+
+        BuildPlan plan = configQueue.pop();
+        Tile tile = Vars.world.tile(plan.x, plan.y);
+        if (tile != null && tile.build != null && tile.build.block == plan.block) {
+            Log.info("Call.tileConfig at (@, @)", plan.x, plan.y);
+            Call.tileConfig(null, tile.build, plan.config);
+        }
+
+        Time.runTask(CONFIG_INTERVAL, () -> processNextConfig());
     }
     
     /** Assigns build tasks to idle processors based on player's queue. */

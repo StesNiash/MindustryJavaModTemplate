@@ -31,40 +31,14 @@ public class SiliconDevilUnitBuildMod extends Mod {
     private Seq<BuildPlan> configQueue = new Seq<>();
     /** Whether the config worker is currently running. */
     private boolean configWorkerRunning = false;
-    
-    /** The target string to search for in processor code. */
-    private static final String TARGET_STRING = "print \"SILICONDEVIL UNIT BUILD MOD\"";
-    
-    /** Interval between scans in seconds. */
-    private static final float SCAN_INTERVAL = 5.0f;
 
-    /** Maximum number of blocks to encode per processor. */
-    private static final int MAX_BLOCKS_PER_PROCESSOR = 20;
-
-    /** Minimum delay in seconds between consecutive config applications. */
-    private static final float CONFIG_INTERVAL = 0.7f;
-
-    /** Prefix of processor code (must be present). */
-    private static final String CODE_PREFIX = "print \"SILICONDEVIL UNIT BUILD MOD\"\n"
-        + "sensor uDead myUnit @dead\n"
-        + "jump 9 equal uDead 0\n"
-        + "ubind @mega\n"
-        + "sensor uCont @unit @controller\n"
-        + "jump 8 equal uCont @this\n"
-        + "jump 8 equal uCont processor1\n"
-        + "end\n"
-        + "set myUnit @unit\n"
-        + "ubind myUnit\n"
-        + "set @counter current\n"
-        + "set current @counter";
-    
     public SiliconDevilUnitBuildMod() {
         Log.info("Loaded SiliconDevil Unit Build Mod constructor.");
         
         // Listen for game load event to start scanning
         Events.on(ClientLoadEvent.class, e -> {
             Log.info("Starting periodic scan for processors with target string.");
-            // Schedule first scan after 0 seconds, then recursively schedule
+            ModConfig.registerSettings(Vars.ui.settings);
             scheduleScan();
         });
     }
@@ -77,7 +51,7 @@ public class SiliconDevilUnitBuildMod extends Mod {
     
     /** Schedules a scan after SCAN_INTERVAL seconds. */
     private void scheduleScan() {
-        Time.runTask(SCAN_INTERVAL, () -> {
+        Time.runTask(ModConfig.scanInterval(), () -> {
             scanProcessors();
             assignBuildTasks();
             applyPendingConfigs();
@@ -100,7 +74,7 @@ public class SiliconDevilUnitBuildMod extends Mod {
             if (building instanceof LogicBuild) {
                 LogicBuild processor = (LogicBuild) building;
                 // Check if processor code contains the target string
-                if (processor.code != null && processor.code.contains(TARGET_STRING)) {
+                if (processor.code != null && processor.code.contains(ModConfig.targetString())) {
                     newMap.put(processor.id, processor);
                     // Store current config to avoid unnecessary updates
                     lastConfigs.put(processor.id, processor.config());
@@ -174,7 +148,7 @@ public class SiliconDevilUnitBuildMod extends Mod {
             Call.tileConfig(null, tile.build, plan.config);
         }
 
-        Time.runTask(CONFIG_INTERVAL, () -> processNextConfig());
+        Time.runTask(ModConfig.configInterval(), () -> processNextConfig());
     }
     
     /** Assigns build tasks to idle processors based on player's queue. */
@@ -214,7 +188,7 @@ public class SiliconDevilUnitBuildMod extends Mod {
             
             // Batch is resolved — assign a fresh batch from the end of the queue
             Seq<BuildPlan> newBatch = new Seq<>();
-            int slots = Math.min(MAX_BLOCKS_PER_PROCESSOR, unassignedPlans.size);
+            int slots = Math.min(ModConfig.maxBlocksPerProcessor(), unassignedPlans.size);
             for (int i = 0; i < slots; i++) {
                 newBatch.add(unassignedPlans.pop());
             }
@@ -252,7 +226,7 @@ public class SiliconDevilUnitBuildMod extends Mod {
         // Cooldown check: skip if updated too recently
         long now = Time.millis();
         long last = lastUpdateTime.get(processor.id, 0L);
-        if (now - last < 250) {
+        if (now - last < ModConfig.processorUpdateCooldownMs()) {
             Log.debug("Skipping update for processor @ due to cooldown.", processor.id);
             return;
         }
@@ -300,8 +274,8 @@ public class SiliconDevilUnitBuildMod extends Mod {
     /** Generates full processor code for the given list of build plans (up to MAX_BLOCKS_PER_PROCESSOR). */
     private String generateProcessorCode(Seq<BuildPlan> plans) {
         StringBuilder sb = new StringBuilder();
-        sb.append(CODE_PREFIX).append("\n");
-        int count = Math.min(plans.size, MAX_BLOCKS_PER_PROCESSOR);
+        sb.append(ModConfig.codePrefix()).append("\n");
+        int count = Math.min(plans.size, ModConfig.maxBlocksPerProcessor());
         for (int i = 0; i < count; i++) {
             BuildPlan plan = plans.get(i);
             String blockConst = "@" + plan.block.name;

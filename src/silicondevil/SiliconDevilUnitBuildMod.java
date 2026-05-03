@@ -28,7 +28,8 @@ public class SiliconDevilUnitBuildMod extends Mod {
         Events.on(ClientLoadEvent.class, e -> {
             Log.info("Starting periodic scan for processors with target string.");
             ModConfig.registerSettings(Vars.ui.settings);
-            scheduleScan();
+            scheduleProcessorScan();
+            scheduleTaskAssignment();
             scheduleConfigCheck();
         });
     }
@@ -38,12 +39,18 @@ public class SiliconDevilUnitBuildMod extends Mod {
         Log.info("Loading SiliconDevil Unit Build Mod content.");
     }
 
-    private void scheduleScan() {
-        Time.runTask(ModConfig.scanInterval(), () -> {
+    private void scheduleProcessorScan() {
+        Time.runTask(ModConfig.processorScanInterval(), () -> {
             scanProcessors();
+            scheduleProcessorScan();
+        });
+    }
+
+    private void scheduleTaskAssignment() {
+        Time.runTask(ModConfig.scanInterval(), () -> {
             assignBuildTasks();
             enqueueBatchPlans();
-            scheduleScan();
+            scheduleTaskAssignment();
         });
     }
 

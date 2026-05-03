@@ -14,6 +14,10 @@ public class ModConfig {
         return Core.settings.getInt(PREFIX + "scan-interval", 5) * 60f;
     }
 
+    public static float processorScanInterval() {
+        return Core.settings.getInt(PREFIX + "processor-scan-interval", 30) * 60f;
+    }
+
     public static float configCheckInterval() {
         return (Core.settings.getInt(PREFIX + "config-interval", 5) / 10f) * 60f;
     }
@@ -45,6 +49,7 @@ public class ModConfig {
         dialog.addCategory("SiliconDevil", "icon-silicondevil", table -> {
             table.sliderPref(PREFIX + "max-blocks", 20, 1, 50, v -> v + " blocks");
             table.sliderPref(PREFIX + "scan-interval", 5, 1, 30, v -> v + "s");
+            table.sliderPref(PREFIX + "processor-scan-interval", 30, 5, 120, v -> v + "s");
             table.sliderPref(PREFIX + "config-interval", 5, 1, 50, v -> (v / 10f) + "s");
             table.sliderPref(PREFIX + "update-cooldown", 250, 50, 2000, v -> v + "ms");
         });

@@ -21,6 +21,8 @@ public class SiliconDevilUnitBuildMod extends Mod {
     private IntMap<Seq<BuildPlan>> assignedPlans = new IntMap<>();
     private IntMap<Long> lastUpdateTime = new IntMap<>();
     private Seq<BuildPlan> configQueue = new Seq<>();
+    private ObjectMap<Long, Integer> configAttempts = new ObjectMap<>();
+    private ObjectMap<Long, Object> initialConfigs = new ObjectMap<>();
 
     public SiliconDevilUnitBuildMod() {
         Log.info("Loaded SiliconDevil Unit Build Mod constructor.");
@@ -61,6 +63,9 @@ public class SiliconDevilUnitBuildMod extends Mod {
             for (BuildPlan plan : plans) {
                 if (plan.config == null) continue;
                 if (!isQueued(plan.x, plan.y)) {
+                    long pos = packCoord(plan.x, plan.y);
+                    configAttempts.remove(pos);
+                    initialConfigs.remove(pos);
                     configQueue.insert(0, plan);
                 }
             }
@@ -120,6 +125,9 @@ public class SiliconDevilUnitBuildMod extends Mod {
         for (BuildPlan plan : plans) {
             if (plan.config == null) continue;
             if (!isQueued(plan.x, plan.y)) {
+                long pos = packCoord(plan.x, plan.y);
+                configAttempts.remove(pos);
+                initialConfigs.remove(pos);
                 configQueue.insert(0, plan);
             }
         }
@@ -135,24 +143,67 @@ public class SiliconDevilUnitBuildMod extends Mod {
         for (BuildPlan plan : configQueue) {
             Tile tile = Vars.world.tile(plan.x, plan.y);
             boolean blockInWorld = tile != null && tile.build != null && tile.build.block == plan.block;
-            boolean planInQueue = buildQueue.contains(plan);
 
             if (blockInWorld) {
+                long pos = packCoord(plan.x, plan.y);
                 Object currentConfig = tile.build.config();
-                if (!Objects.equals(currentConfig, plan.config)) {
+
+                // Check 1: direct config match
+                if (Objects.equals(currentConfig, plan.config)) {
+                    configAttempts.remove(pos);
+                    initialConfigs.remove(pos);
+                    continue;
+                }
+
+                int attempts = configAttempts.get(pos, 0);
+
+                if (attempts == 0) {
+                    // first time: snapshot and apply only if slot available
                     if (!configApplied) {
+                        initialConfigs.put(pos, currentConfig);
                         Log.info("Call.tileConfig at (@, @)", plan.x, plan.y);
                         Call.tileConfig(Vars.player, tile.build, plan.config);
                         configApplied = true;
+                        configAttempts.put(pos, 1);
                     }
                     remaining.add(plan);
+                } else {
+                    // Check 2: config changed from initial (application had effect)
+                    if (!Objects.equals(initialConfigs.get(pos), currentConfig)) {
+                        configAttempts.remove(pos);
+                        initialConfigs.remove(pos);
+                        continue;
+                    }
+
+                    // Check 3: retry limit exceeded
+                    if (attempts >= 3) {
+                        configAttempts.remove(pos);
+                        initialConfigs.remove(pos);
+                        continue;
+                    }
+
+                    // retry: apply again and increment attempts
+                    if (!configApplied) {
+                        Log.info("Call.tileConfig retry at (@, @) attempt @", plan.x, plan.y, attempts + 1);
+                        Call.tileConfig(Vars.player, tile.build, plan.config);
+                        configApplied = true;
+                    }
+                    configAttempts.put(pos, attempts + 1);
+                    remaining.add(plan);
                 }
-            } else if (planInQueue) {
+            } else if (buildQueue.contains(plan)) {
+                long pos = packCoord(plan.x, plan.y);
+                configAttempts.remove(pos);
+                initialConfigs.remove(pos);
                 remaining.add(plan);
             }
         }
 
         configQueue = remaining;
+    }
+
+    private static long packCoord(int x, int y) {
+        return ((long)x << 32) | (y & 0xffffffffL);
     }
 
     private void assignBuildTasks() {

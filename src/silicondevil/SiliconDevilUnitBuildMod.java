@@ -17,154 +17,130 @@ import mindustry.world.blocks.logic.LogicBlock.LogicBuild;
 import mindustry.entities.units.BuildPlan;
 
 public class SiliconDevilUnitBuildMod extends Mod {
-    /** Map of processor IDs to processor buildings that contain the target string. */
     private IntMap<LogicBuild> processorsWithString = new IntMap<>();
-    /** Map of processor IDs to currently assigned build plans (list of up to MAX_BLOCKS_PER_PROCESSOR). */
     private IntMap<Seq<BuildPlan>> assignedPlans = new IntMap<>();
-    /** Set of coordinates where config has already been applied. */
-    private IntSet appliedConfigs = new IntSet();
-    /** Map of processor IDs to last known config (to avoid unnecessary updates). */
-    private IntMap<byte[]> lastConfigs = new IntMap<>();
-    /** Map of processor IDs to last update time (for cooldown). */
     private IntMap<Long> lastUpdateTime = new IntMap<>();
-    /** Queue of blocks awaiting config application (rate-limited). */
     private Seq<BuildPlan> configQueue = new Seq<>();
-    /** Whether the config worker is currently running. */
-    private boolean configWorkerRunning = false;
 
     public SiliconDevilUnitBuildMod() {
         Log.info("Loaded SiliconDevil Unit Build Mod constructor.");
-        
-        // Listen for game load event to start scanning
+
         Events.on(ClientLoadEvent.class, e -> {
             Log.info("Starting periodic scan for processors with target string.");
             ModConfig.registerSettings(Vars.ui.settings);
             scheduleScan();
+            scheduleConfigCheck();
         });
     }
-    
+
     @Override
     public void loadContent() {
         Log.info("Loading SiliconDevil Unit Build Mod content.");
-        // No custom content needed for now
     }
-    
-    /** Schedules a scan after SCAN_INTERVAL seconds. */
+
     private void scheduleScan() {
         Time.runTask(ModConfig.scanInterval(), () -> {
             scanProcessors();
             assignBuildTasks();
-            applyPendingConfigs();
-            scheduleScan(); // reschedule
+            scheduleScan();
         });
     }
-    
-    /** Scans all processors in the world and updates the map. */
+
+    private void scheduleConfigCheck() {
+        Time.runTask(ModConfig.configCheckInterval(), () -> {
+            processConfigQueue();
+            scheduleConfigCheck();
+        });
+    }
+
     private void scanProcessors() {
         if (Vars.world == null) return;
-        
-        // Clear previous results (or keep and update)
         IntMap<LogicBuild> newMap = new IntMap<>();
-        
-        // Iterate over all tiles (or use Groups.build if available)
-        // Using world.tiles.eachTile as in MapProcessorsDialog
         Vars.world.tiles.eachTile(tile -> {
             if (!tile.isCenter()) return;
             Building building = tile.build;
             if (building instanceof LogicBuild) {
                 LogicBuild processor = (LogicBuild) building;
-                // Check if processor code contains the target string
                 if (processor.code != null && processor.code.contains(ModConfig.targetString())) {
                     newMap.put(processor.id, processor);
-                    // Store current config to avoid unnecessary updates
-                    lastConfigs.put(processor.id, processor.config());
                 }
             }
         });
-        
         processorsWithString = newMap;
     }
-    
-    /** Retrieves the player's current build queue. Returns empty seq if player is dead or not a builder. */
+
     private Seq<BuildPlan> getPlayerBuildQueue() {
         if (Vars.player == null || Vars.player.dead()) return new Seq<>();
         Unit playerUnit = Vars.player.unit();
         if (playerUnit == null || !playerUnit.canBuild()) return new Seq<>();
-        // playerUnit.plans() returns a Queue<BuildPlan>, convert to Seq for convenience
         Seq<BuildPlan> queue = new Seq<>();
         for (BuildPlan plan : playerUnit.plans()) {
             if (!plan.breaking) queue.add(plan);
         }
         return queue;
     }
-    
-    /** Determines if a build plan is already completed (block built). */
+
     private boolean isPlanCompleted(BuildPlan plan) {
         if (plan == null) return true;
         Tile tile = Vars.world.tile(plan.x, plan.y);
         if (tile == null) return false;
         Building building = tile.build;
-        // Consider completed if a building of the same type exists and is fully built (health >= maxHealth?)
-        // For simplicity, assume if building exists and block matches, plan is done.
         return building != null && building.block == plan.block;
     }
 
-    /** Checks if a built block needs config and queues it for rate-limited application. */
-    private void applyConfigOnce(BuildPlan plan) {
-        if (plan.config == null) return;
-        int key = plan.x * 10000 + plan.y;
-        if (appliedConfigs.contains(key)) return;
-        Tile tile = Vars.world.tile(plan.x, plan.y);
-        if (tile != null && tile.build != null && tile.build.block == plan.block) {
-            Object currentConfig = tile.build.config();
-            if (Objects.equals(currentConfig, plan.config)) {
-                appliedConfigs.add(key);
-                return;
+    private boolean isQueued(int x, int y) {
+        for (BuildPlan p : configQueue) {
+            if (p.x == x && p.y == y) return true;
+        }
+        return false;
+    }
+
+    private void addToConfigQueue(Seq<BuildPlan> plans) {
+        for (BuildPlan plan : plans) {
+            if (plan.config == null) continue;
+            if (!isQueued(plan.x, plan.y)) {
+                configQueue.insert(0, plan);
             }
-            appliedConfigs.add(key);
-            configQueue.insert(0, plan);
-            startConfigWorker();
         }
     }
 
-    /** Starts the config worker if not already running. */
-    private void startConfigWorker() {
-        if (configWorkerRunning) return;
-        configWorkerRunning = true;
-        processNextConfig();
-    }
+    private void processConfigQueue() {
+        if (configQueue.size == 0) return;
 
-    /** Processes the next item from the config queue with a delay between each. */
-    private void processNextConfig() {
-        if (configQueue.size == 0) {
-            configWorkerRunning = false;
-            return;
+        Seq<BuildPlan> buildQueue = getPlayerBuildQueue();
+        Seq<BuildPlan> remaining = new Seq<>();
+        boolean configApplied = false;
+
+        for (BuildPlan plan : configQueue) {
+            Tile tile = Vars.world.tile(plan.x, plan.y);
+            boolean blockInWorld = tile != null && tile.build != null && tile.build.block == plan.block;
+            boolean planInQueue = buildQueue.contains(plan);
+
+            if (blockInWorld) {
+                Object currentConfig = tile.build.config();
+                if (!configApplied && !Objects.equals(currentConfig, plan.config)) {
+                    Log.info("Call.tileConfig at (@, @)", plan.x, plan.y);
+                    Call.tileConfig(Vars.player, tile.build, plan.config);
+                    configApplied = true;
+                }
+            } else if (planInQueue) {
+                remaining.add(plan);
+            }
         }
 
-        BuildPlan plan = configQueue.pop();
-        Tile tile = Vars.world.tile(plan.x, plan.y);
-        if (tile != null && tile.build != null && tile.build.block == plan.block) {
-            Log.info("Call.tileConfig at (@, @)", plan.x, plan.y);
-            Call.tileConfig(null, tile.build, plan.config);
-        }
-
-        Time.runTask(ModConfig.configInterval(), () -> processNextConfig());
+        configQueue = remaining;
     }
-    
-    /** Assigns build tasks to idle processors based on player's queue. */
+
     private void assignBuildTasks() {
         Seq<BuildPlan> queue = getPlayerBuildQueue();
         IntMap<Seq<BuildPlan>> newAssignments = new IntMap<>();
-        
         Seq<BuildPlan> unassignedPlans = new Seq<>(queue);
-        
+
         for (IntMap.Entry<LogicBuild> entry : processorsWithString) {
             int pid = entry.key;
             LogicBuild processor = entry.value;
             Seq<BuildPlan> oldBatch = assignedPlans.get(pid);
-            
-            // Check if the current batch is fully resolved:
-            // all plans are either built or no longer in the player's queue
+
             boolean batchResolved = true;
             if (oldBatch != null && oldBatch.size > 0) {
                 for (BuildPlan plan : oldBatch) {
@@ -175,7 +151,7 @@ public class SiliconDevilUnitBuildMod extends Mod {
                     }
                 }
             }
-            
+
             if (!batchResolved) {
                 newAssignments.put(pid, oldBatch);
                 if (oldBatch != null) {
@@ -185,75 +161,42 @@ public class SiliconDevilUnitBuildMod extends Mod {
                 }
                 continue;
             }
-            
-            // Batch is resolved — assign a fresh batch from the end of the queue
+
             Seq<BuildPlan> newBatch = new Seq<>();
             int slots = Math.min(ModConfig.maxBlocksPerProcessor(), unassignedPlans.size);
             for (int i = 0; i < slots; i++) {
                 newBatch.add(unassignedPlans.pop());
             }
-            
+
             newAssignments.put(pid, newBatch);
+            addToConfigQueue(newBatch);
             updateProcessorCodeMultiple(processor, newBatch);
         }
-        
+
         assignedPlans = newAssignments;
     }
-    
-    /** Applies saved configs for blocks that have been built. */
-    private void applyPendingConfigs() {
-        for (IntMap.Entry<Seq<BuildPlan>> entry : assignedPlans) {
-            Seq<BuildPlan> plans = entry.value;
-            if (plans == null) continue;
-            for (BuildPlan plan : plans) {
-                if (plan == null) continue;
-                applyConfigOnce(plan);
-            }
-        }
-    }
-    
-    /** Updates the processor's code to reflect the assigned build plan (or idle). */
-    private void updateProcessorCode(LogicBuild processor, BuildPlan plan) {
-        Seq<BuildPlan> plans = new Seq<>();
-        if (plan != null) plans.add(plan);
-        updateProcessorCodeMultiple(processor, plans);
-    }
 
-    /** Updates the processor's code with multiple build plans (up to MAX_BLOCKS_PER_PROCESSOR). */
     private void updateProcessorCodeMultiple(LogicBuild processor, Seq<BuildPlan> plans) {
         if (processor.code == null) return;
 
-        // Cooldown check: skip if updated too recently
         long now = Time.millis();
         long last = lastUpdateTime.get(processor.id, 0L);
-        if (now - last < ModConfig.processorUpdateCooldownMs()) {
-            Log.debug("Skipping update for processor @ due to cooldown.", processor.id);
-            return;
-        }
+        if (now - last < ModConfig.processorUpdateCooldownMs()) return;
 
-        // Generate new code
         String newCode = generateProcessorCode(plans);
-        // Compare with existing code to avoid unnecessary updates
-        if (newCode.equals(processor.code)) {
-            Log.debug("Processor @ code unchanged.", processor.id);
-            return;
-        }
+        if (newCode.equals(processor.code)) return;
 
         byte[] oldConfig = processor.config();
-        // Update processor code (this will trigger recompilation)
         processor.code = newCode;
         processor.updateCode(newCode);
-        // Sync config to server only if config changed
         byte[] newConfig = processor.config();
         if (!Arrays.equals(oldConfig, newConfig)) {
             Call.tileConfig(null, processor, newConfig);
         }
-        // Store latest config and update time
-        lastConfigs.put(processor.id, newConfig);
         lastUpdateTime.put(processor.id, now);
         Log.info("Updated processor @ code.", processor.id);
     }
-    
+
     private String configToString(Object config) {
         if (config instanceof Item) {
             return "@" + ((Item)config).name;
@@ -264,14 +207,12 @@ public class SiliconDevilUnitBuildMod extends Mod {
         } else if (config instanceof Integer) {
             return config.toString();
         } else if (config != null) {
-            // fallback: try to convert to string, maybe it's a content
             return config.toString();
         } else {
             return "0";
         }
     }
-    
-    /** Generates full processor code for the given list of build plans (up to MAX_BLOCKS_PER_PROCESSOR). */
+
     private String generateProcessorCode(Seq<BuildPlan> plans) {
         StringBuilder sb = new StringBuilder();
         sb.append(ModConfig.codePrefix()).append("\n");
@@ -281,7 +222,6 @@ public class SiliconDevilUnitBuildMod extends Mod {
             String blockConst = "@" + plan.block.name;
             String configStr = configToString(plan.config);
             int rotation = plan.rotation;
-            // Block section
             sb.append("\nBlock").append(i + 1).append(":\n");
             sb.append("    ucontrol move ").append(plan.x).append(" ").append(plan.y).append(" 0 0 0\n");
             sb.append("    ucontrol build ").append(plan.x).append(" ").append(plan.y).append(" ").append(blockConst).append(" ").append(rotation).append(" ").append(configStr).append("\n");
@@ -291,17 +231,13 @@ public class SiliconDevilUnitBuildMod extends Mod {
             sb.append("End").append(i + 1).append(":\n");
             sb.append("    set current @counter\n");
         }
-        // If there are fewer plans than max, we can optionally add idle blocks (air) but not required.
-        // The processor will just loop.
         return sb.toString();
     }
-    
-    /** Returns the current map of processor IDs to LogicBuild instances. */
+
     public IntMap<LogicBuild> getProcessorsWithString() {
         return processorsWithString;
     }
-    
-    /** Returns the current map of processor IDs to assigned build plans. */
+
     public IntMap<Seq<BuildPlan>> getAssignedPlans() {
         return assignedPlans;
     }

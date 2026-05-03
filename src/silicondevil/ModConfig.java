@@ -14,8 +14,8 @@ public class ModConfig {
         return Core.settings.getInt(PREFIX + "scan-interval", 5);
     }
 
-    public static float configInterval() {
-        return Core.settings.getInt(PREFIX + "config-interval", 40) / 100f;
+    public static float configCheckInterval() {
+        return Core.settings.getInt(PREFIX + "config-check", 50) / 100f;
     }
 
     public static long processorUpdateCooldownMs() {

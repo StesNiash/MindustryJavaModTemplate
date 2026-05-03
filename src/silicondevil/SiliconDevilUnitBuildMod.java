@@ -42,8 +42,22 @@ public class SiliconDevilUnitBuildMod extends Mod {
         Time.runTask(ModConfig.scanInterval(), () -> {
             scanProcessors();
             assignBuildTasks();
+            enqueueBatchPlans();
             scheduleScan();
         });
+    }
+
+    private void enqueueBatchPlans() {
+        for (IntMap.Entry<Seq<BuildPlan>> entry : assignedPlans) {
+            Seq<BuildPlan> plans = entry.value;
+            if (plans == null) continue;
+            for (BuildPlan plan : plans) {
+                if (plan.config == null) continue;
+                if (!isQueued(plan.x, plan.y)) {
+                    configQueue.insert(0, plan);
+                }
+            }
+        }
     }
 
     private void scheduleConfigCheck() {
@@ -118,10 +132,13 @@ public class SiliconDevilUnitBuildMod extends Mod {
 
             if (blockInWorld) {
                 Object currentConfig = tile.build.config();
-                if (!configApplied && !Objects.equals(currentConfig, plan.config)) {
-                    Log.info("Call.tileConfig at (@, @)", plan.x, plan.y);
-                    Call.tileConfig(Vars.player, tile.build, plan.config);
-                    configApplied = true;
+                if (!Objects.equals(currentConfig, plan.config)) {
+                    if (!configApplied) {
+                        Log.info("Call.tileConfig at (@, @)", plan.x, plan.y);
+                        Call.tileConfig(Vars.player, tile.build, plan.config);
+                        configApplied = true;
+                    }
+                    remaining.add(plan);
                 }
             } else if (planInQueue) {
                 remaining.add(plan);

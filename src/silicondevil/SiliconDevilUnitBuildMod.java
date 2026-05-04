@@ -14,6 +14,7 @@ import mindustry.world.*;
 import mindustry.type.Item;
 import mindustry.type.Liquid;
 import mindustry.world.blocks.logic.LogicBlock.LogicBuild;
+import mindustry.world.blocks.power.PowerNode;
 import mindustry.entities.units.BuildPlan;
 
 public class SiliconDevilUnitBuildMod extends Mod {
@@ -62,6 +63,7 @@ public class SiliconDevilUnitBuildMod extends Mod {
             if (plans == null) continue;
             for (BuildPlan plan : plans) {
                 if (plan.config == null) continue;
+                if (plan.block instanceof PowerNode) continue;
                 if (!isQueued(plan.x, plan.y)) {
                     long pos = packCoord(plan.x, plan.y);
                     configAttempts.remove(pos);
@@ -124,6 +126,7 @@ public class SiliconDevilUnitBuildMod extends Mod {
     private void addToConfigQueue(Seq<BuildPlan> plans) {
         for (BuildPlan plan : plans) {
             if (plan.config == null) continue;
+            if (plan.block instanceof PowerNode) continue;
             if (!isQueued(plan.x, plan.y)) {
                 long pos = packCoord(plan.x, plan.y);
                 configAttempts.remove(pos);

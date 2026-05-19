@@ -321,13 +321,7 @@ public class AutoBuild {
                 var0.add(var8.copy());
              }
 
-             int var7 = schematic.width;
-             int var9 = schematic.height;
-             var0.add(new Schematic.Stile(Blocks.coreBastion, -3, -3, (Object)null, (byte)0));
-             var0.add(new Schematic.Stile(Blocks.coreBastion, var7 + 1, -3, (Object)null, (byte)0));
-             var0.add(new Schematic.Stile(Blocks.coreBastion, -3, var9 + 1, (Object)null, (byte)0));
-             var0.add(new Schematic.Stile(Blocks.coreBastion, var7 + 1, var9 + 1, (Object)null, (byte)0));
-             Schematic var11 = new Schematic(var0, StringMap.of(new Object[]{"name", saveName}), var7, var9);
+             Schematic var11 = new Schematic(var0, StringMap.of(new Object[]{"name", saveName}), schematic.width, schematic.height);
              var11.labels.add("autoBuild");
              var11.tags.put("description", "autobuild-v2:" + encodeSkipCoords());
              Vars.schematics.add(var11);

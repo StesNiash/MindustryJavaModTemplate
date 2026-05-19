@@ -22,6 +22,7 @@ import arc.scene.ui.layout.Scl;
 import arc.scene.ui.layout.Stack;
 import arc.scene.ui.layout.Table;
 import arc.scene.ui.layout.WidgetGroup;
+import arc.struct.Queue;
 import arc.struct.Seq;
 import arc.struct.StringMap;
 import arc.util.Log;
@@ -335,97 +336,71 @@ public class AutoBuild {
     public static void initPlacementHook() {
         if (hookInitialized) return;
         hookInitialized = true;
-        Log.info("AutoBuild: initPlacementHook registered");
+        Log.info("AutoBuild: initPlacementHook registered (Trigger.update)");
 
-        Events.on(EventType.BuildSelectEvent.class, (EventType.BuildSelectEvent event) -> {
-            if (event.breaking || event.tile == null) {
-                Log.info("AutoBuild: BuildSelectEvent skipped (breaking=" + event.breaking + ", tile=" + event.tile + ")");
-                return;
-            }
-            Log.info("AutoBuild: BuildSelectEvent fired at tile (" + event.tile.x + "," + event.tile.y + ")");
+        Events.run(EventType.Trigger.update, () -> {
+            if (Vars.player == null || Vars.player.unit() == null) return;
+            InputHandler input = Vars.control.input;
+            if (input == null) return;
 
+            Seq<BuildPlan> selectPlans;
             try {
-                InputHandler input = Vars.control.input;
-                if (input == null) { Log.info("AutoBuild: input null"); return; }
-                Log.info("AutoBuild: input class = " + input.getClass().getName());
-                Log.info("AutoBuild: BuildSelectEvent tile=" + event.tile.x + "," + event.tile.y);
+                selectPlans = Reflect.get(InputHandler.class, input, "selectPlans");
+            } catch (Exception e) { return; }
+            if (selectPlans == null || selectPlans.isEmpty()) return;
 
-                Seq<BuildPlan> selectPlans = Reflect.get(InputHandler.class, input, "selectPlans");
-                Log.info("AutoBuild: selectPlans size=" + (selectPlans != null ? selectPlans.size : "null"));
+            for (Schematic s : Vars.schematics.all()) {
+                if (!s.labels.contains("autoBuild")) continue;
+                String desc = s.tags.get("description", "");
+                if (!desc.startsWith("autobuild-v2:")) continue;
 
-                for (Schematic s : Vars.schematics.all()) {
-                    if (!s.labels.contains("autoBuild")) continue;
-                    String desc = s.tags.get("description", "");
-                    if (!desc.startsWith("autobuild-v2:")) continue;
-
-                    Log.info("AutoBuild: checking schematic '" + s.name() + "'");
-                    if (selectPlans == null || selectPlans.size == 0) {
-                        Log.info("AutoBuild: selectPlans empty, skip");
-                        continue;
+                int schemX = -1, schemY = -1;
+                for (Schematic.Stile stile : s.tiles) {
+                    if (stile.block != Blocks.coreBastion) continue;
+                    for (BuildPlan plan : selectPlans) {
+                        if (plan.block != Blocks.coreBastion) continue;
+                        schemX = plan.x + s.width / 2 - stile.x;
+                        schemY = plan.y + s.height / 2 - stile.y;
+                        break;
                     }
-
-                    int schemX = -1, schemY = -1;
-                    for (Schematic.Stile stile : s.tiles) {
-                        if (stile.block != Blocks.coreBastion) continue;
-                        for (BuildPlan plan : selectPlans) {
-                            if (plan.block != Blocks.coreBastion) continue;
-                            int calcX = plan.x + s.width / 2 - stile.x;
-                            int calcY = plan.y + s.height / 2 - stile.y;
-                            Log.info("AutoBuild: bastion plan (" + plan.x + "," + plan.y + ") stile (" + stile.x + "," + stile.y + ") -> calc schem (" + calcX + "," + calcY + ")");
-                            if (schemX == -1) { schemX = calcX; schemY = calcY; }
-                            break;
-                        }
-                        if (schemX != -1) break;
-                    }
-
-                    if (schemX == -1) {
-                        Log.info("AutoBuild: could not find bastion in selectPlans for schematic");
-                        continue;
-                    }
-                    Log.info("AutoBuild: calculated schemX=" + schemX + " schemY=" + schemY);
-
-                    String skipData = desc.substring("autobuild-v2:".length());
-                    if (skipData.isEmpty()) continue;
-
-                    Log.info("AutoBuild: skipData=" + skipData);
-                    boolean matched = false;
-                    for (String coord : skipData.split(";")) {
-                        if (coord.isEmpty()) continue;
-                        String[] parts = coord.split(",");
-                        if (parts.length < 2) continue;
-                        int tileX = Integer.parseInt(parts[0].trim());
-                        int tileY = Integer.parseInt(parts[1].trim());
-                        int worldX = schemX - s.width / 2 + tileX;
-                        int worldY = schemY - s.height / 2 + tileY;
-
-                        Log.info("AutoBuild: skip (" + tileX + "," + tileY + ") -> world (" + worldX + "," + worldY + ")");
-
-                        if (event.tile.x == worldX && event.tile.y == worldY) {
-                            matched = true;
-                            Log.info("AutoBuild: MATCH! Removing and adding phantom");
-                            try { Vars.player.unit().removeBuild(worldX, worldY, false); } catch (Exception e2) { Log.info("AutoBuild: removeBuild err: " + e2); }
-                            event.tile.setBlock(Blocks.air);
-
-                            Object planTree = Reflect.get(InputHandler.class, input, "playerPlanTree");
-                            if (planTree != null) {
-                                for (Schematic.Stile stile : s.tiles) {
-                                    if (stile.x == tileX && stile.y == tileY) {
-                                        try {
-                                            Reflect.invoke(planTree.getClass(), planTree, "insert", new Object[]{new BuildPlan(worldX, worldY, stile.rotation, stile.block, stile.config)});
-                                            Log.info("AutoBuild: phantom inserted");
-                                        } catch (Exception e3) { Log.info("AutoBuild: phantom insert err: " + e3); }
-                                        break;
-                                    }
-                                }
-                            } else { Log.info("AutoBuild: planTree null"); }
-                            break;
-                        }
-                    }
-                    if (matched) return;
+                    if (schemX != -1) break;
                 }
-                Log.info("AutoBuild: no match for any autobuild schematic");
-            } catch (Exception e) {
-                Log.info("AutoBuild: error: " + e);
+                if (schemX == -1) continue;
+
+                Log.info("AutoBuild: autobuild schematic detected, schemX=" + schemX + " schemY=" + schemY + " w=" + s.width + " h=" + s.height + " plansInQueue=" + (Vars.player.unit().plans != null ? Vars.player.unit().plans.size : "no plans"));
+
+                String skipData = desc.substring("autobuild-v2:".length());
+                if (skipData.isEmpty()) continue;
+
+                for (String coord : skipData.split(";")) {
+                    if (coord.isEmpty()) continue;
+                    String[] parts = coord.split(",");
+                    if (parts.length < 2) continue;
+                    int tileX = Integer.parseInt(parts[0].trim());
+                    int tileY = Integer.parseInt(parts[1].trim());
+                    int worldX = schemX - s.width / 2 + tileX;
+                    int worldY = schemY - s.height / 2 + tileY;
+
+                    try {
+                        Vars.player.unit().removeBuild(worldX, worldY, false);
+                        Log.info("AutoBuild: removeBuild called at (" + worldX + "," + worldY + ")");
+
+                        Object planTree = Reflect.get(InputHandler.class, input, "playerPlanTree");
+                        if (planTree != null) {
+                            for (Schematic.Stile stile : s.tiles) {
+                                if (stile.x == tileX && stile.y == tileY) {
+                                    Reflect.invoke(planTree.getClass(), planTree, "insert", new Object[]{
+                                        new BuildPlan(worldX, worldY, stile.rotation, stile.block, stile.config)
+                                    });
+                                    Log.info("AutoBuild: phantom inserted at (" + worldX + "," + worldY + ")");
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (Exception e) {
+                        Log.info("AutoBuild: removeBuild err at (" + worldX + "," + worldY + "): " + e);
+                    }
+                }
             }
         });
     }

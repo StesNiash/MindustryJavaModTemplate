@@ -520,7 +520,10 @@ public class AutoBuild {
         String[] coords = data.split(";");
         for (String coord : coords) {
             if (coord.isEmpty()) continue;
-            preAssignedTiles.add(coord);
+            String[] parts = coord.split(",");
+            if (parts.length >= 2) {
+                preAssignedTiles.add(parts[0] + "," + parts[1]);
+            }
         }
     }
 
@@ -528,7 +531,7 @@ public class AutoBuild {
         StringBuilder sb = new StringBuilder();
         for (LogicGroup group : logicGroups) {
             for (CodeLink link : group.links) {
-                sb.append(link.tileX).append(",").append(link.tileY).append(";");
+                sb.append(link.tileX).append(",").append(link.tileY).append(",").append(link.block.size).append(";");
             }
         }
         if (sb.length() > 0) sb.setLength(sb.length() - 1);

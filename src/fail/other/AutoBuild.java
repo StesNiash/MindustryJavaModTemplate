@@ -330,6 +330,24 @@ public class AutoBuild {
       }
     }
 
+    private static int[] stileToWorld(Schematic.Stile stile, int schemX, int schemY, int sWidth, int sHeight, int rotation, boolean flipped) {
+        int S = stile.block.size;
+        int planX = stile.x + schemX - sWidth / 2;
+        int planY = stile.y + schemY - sHeight / 2;
+
+        if (flipped) {
+            planX = -planX + 2 * schemX - S;
+        }
+
+        for (int r = 0; r < rotation; r++) {
+            int oldX = planX;
+            planX = schemX + (planY - schemY);
+            planY = schemY - (oldX - schemX) - S;
+        }
+
+        return new int[]{planX, planY};
+    }
+
     public static void initPlacementHook() {
         if (hookInitialized) return;
         hookInitialized = true;
@@ -376,6 +394,10 @@ public class AutoBuild {
                 if (!desc.startsWith("autobuild-v2:")) continue;
 
                 int schemX = -1, schemY = -1;
+                int schemRotation = 0;
+                boolean schemFlipped = false;
+
+                outer:
                 for (BuildPlan sp : selectPlans) {
                     if (sp.block == null || sp.block == Blocks.coreBastion) continue;
                     for (BuildPlan up : unitPlans) {
@@ -384,24 +406,53 @@ public class AutoBuild {
                         for (Schematic.Stile stile : s.tiles) {
                             if (stile.block != sp.block) continue;
                             if (stile.block == Blocks.coreBastion) continue;
-                            int candX = sp.x + s.width / 2 - stile.x;
-                            int candY = sp.y + s.height / 2 - stile.y;
-                            if (!verifyPlacement(s, unitPlans, candX, candY)) continue;
-                            String key = candX + "," + candY + "," + s.width + "," + s.height + "," + desc;
-                            if (processedPlacements.contains(key)) continue;
-                            schemX = candX;
-                            schemY = candY;
-                            break;
+                            int S = stile.block.size;
+                            int sx = stile.x, sy = stile.y;
+                            for (int r = 0; r < 4; r++) {
+                                for (int f = 0; f <= 1; f++) {
+                                    boolean flipped = f == 1;
+                                    int offsetX, offsetY;
+                                    switch (r) {
+                                        case 0:
+                                            offsetX = flipped ? -sx + s.width / 2 - S : sx - s.width / 2;
+                                            offsetY = sy - s.height / 2;
+                                            break;
+                                        case 1:
+                                            offsetX = sy - s.height / 2;
+                                            offsetY = flipped ? sx - s.width / 2 : -sx + s.width / 2 - S;
+                                            break;
+                                        case 2:
+                                            offsetX = flipped ? sx - s.width / 2 : -sx + s.width / 2 - S;
+                                            offsetY = -sy + s.height / 2 - S;
+                                            break;
+                                        case 3:
+                                            offsetX = -sy + s.height / 2 - S;
+                                            offsetY = flipped ? -sx + s.width / 2 - S : sx - s.width / 2;
+                                            break;
+                                        default:
+                                            continue;
+                                    }
+                                    int candX = sp.x - offsetX;
+                                    int candY = sp.y - offsetY;
+                                    if (!verifyPlacement(s, unitPlans, candX, candY, r, flipped)) continue;
+                                    String key = candX + "," + candY + "," + s.width + "," + s.height + "," + desc + "," + r + "," + f;
+                                    if (processedPlacements.contains(key)) continue;
+                                    schemX = candX;
+                                    schemY = candY;
+                                    schemRotation = r;
+                                    schemFlipped = flipped;
+                                    break outer;
+                                }
+                            }
                         }
-                        if (schemX != -1) break;
                     }
-                    if (schemX != -1) break;
                 }
+
                 if (schemX == -1) continue;
 
-                processedPlacements.add(schemX + "," + schemY + "," + s.width + "," + s.height + "," + desc);
+                processedPlacements.add(schemX + "," + schemY + "," + s.width + "," + s.height + "," + desc + "," + schemRotation + "," + (schemFlipped ? 1 : 0));
 
-                Log.info("AutoBuild: autobuild schematic detected, schemX=" + schemX + " schemY=" + schemY + " w=" + s.width + " h=" + s.height + " plansInQueue=" + unitPlans.size + " added=" + added);
+                Log.info("AutoBuild: autobuild schematic detected, schemX=" + schemX + " schemY=" + schemY + " w=" + s.width + " h=" + s.height + " rotation=" + schemRotation + " flipped=" + schemFlipped + " plansInQueue=" + unitPlans.size + " added=" + added);
 
                 String skipData = desc.substring("autobuild-v2:".length());
                 if (skipData.isEmpty()) continue;
@@ -412,19 +463,26 @@ public class AutoBuild {
                     if (parts.length < 2) continue;
                     int tileX = Integer.parseInt(parts[0].trim());
                     int tileY = Integer.parseInt(parts[1].trim());
-                    int worldX = schemX - s.width / 2 + tileX;
-                    int worldY = schemY - s.height / 2 + tileY;
 
-                    try {
-                        Vars.player.unit().removeBuild(worldX, worldY, false);
-                        Log.info("AutoBuild: removeBuild called at (" + worldX + "," + worldY + ")");
+                    for (Schematic.Stile stile : s.tiles) {
+                        if (stile.x == tileX && stile.y == tileY) {
+                            int[] worldPos = stileToWorld(stile, schemX, schemY, s.width, s.height, schemRotation, schemFlipped);
+                            int worldX = worldPos[0];
+                            int worldY = worldPos[1];
 
-                        if (input != null) {
-                            Object planTree = Reflect.get(InputHandler.class, input, "playerPlanTree");
-                            if (planTree != null) {
-                                for (Schematic.Stile stile : s.tiles) {
-                                    if (stile.x == tileX && stile.y == tileY) {
-                                        BuildPlan phantom = new BuildPlan(worldX, worldY, stile.rotation, stile.block, stile.config);
+                            try {
+                                Vars.player.unit().removeBuild(worldX, worldY, false);
+                                Log.info("AutoBuild: removeBuild called at (" + worldX + "," + worldY + ")");
+
+                                if (input != null) {
+                                    Object planTree = Reflect.get(InputHandler.class, input, "playerPlanTree");
+                                    if (planTree != null) {
+                                        int phantomRotation = stile.rotation;
+                                        if (schemFlipped && phantomRotation % 2 == 0) {
+                                            phantomRotation = (phantomRotation + 2) % 4;
+                                        }
+                                        phantomRotation = (phantomRotation - schemRotation + 4) % 4;
+                                        BuildPlan phantom = new BuildPlan(worldX, worldY, (byte)phantomRotation, stile.block, stile.config);
                                         try {
                                             Method insertMethod = null;
                                             for (Method m : planTree.getClass().getMethods()) {
@@ -440,13 +498,13 @@ public class AutoBuild {
                                         } catch (Exception e2) {
                                             Log.info("AutoBuild: phantom insert err at (" + worldX + "," + worldY + "): " + e2);
                                         }
-                                        break;
                                     }
                                 }
+                            } catch (Exception e) {
+                                Log.info("AutoBuild: removeBuild err at (" + worldX + "," + worldY + "): " + e);
                             }
+                            break;
                         }
-                    } catch (Exception e) {
-                        Log.info("AutoBuild: removeBuild err at (" + worldX + "," + worldY + "): " + e);
                     }
                 }
             }
@@ -454,12 +512,16 @@ public class AutoBuild {
     }
 
     private static boolean verifyPlacement(Schematic s, Queue<BuildPlan> plans, int schemX, int schemY) {
+        return verifyPlacement(s, plans, schemX, schemY, 0, false);
+    }
+
+    private static boolean verifyPlacement(Schematic s, Queue<BuildPlan> plans, int schemX, int schemY, int rotation, boolean flipped) {
         int matches = 0, total = 0;
         for (Schematic.Stile stile : s.tiles) {
             if (stile.block == Blocks.coreBastion) continue;
             total++;
-            int wx = schemX - s.width / 2 + stile.x;
-            int wy = schemY - s.height / 2 + stile.y;
+            int[] worldPos = stileToWorld(stile, schemX, schemY, s.width, s.height, rotation, flipped);
+            int wx = worldPos[0], wy = worldPos[1];
             for (BuildPlan plan : plans) {
                 if (plan.x == wx && plan.y == wy && plan.block == stile.block) {
                     matches++;

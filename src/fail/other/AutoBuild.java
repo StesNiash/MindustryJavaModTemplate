@@ -353,7 +353,12 @@ public class AutoBuild {
                 prevPlanCount = currentCount;
                 return;
             }
-            if (currentCount <= prevPlanCount) {
+            int added = currentCount - prevPlanCount;
+            if (added <= 0) {
+                prevPlanCount = currentCount;
+                return;
+            }
+            if (added < 3) {
                 prevPlanCount = currentCount;
                 return;
             }
@@ -396,7 +401,7 @@ public class AutoBuild {
 
                 processedPlacements.add(schemX + "," + schemY + "," + s.width + "," + s.height + "," + desc);
 
-                Log.info("AutoBuild: autobuild schematic detected, schemX=" + schemX + " schemY=" + schemY + " w=" + s.width + " h=" + s.height + " plansInQueue=" + unitPlans.size);
+                Log.info("AutoBuild: autobuild schematic detected, schemX=" + schemX + " schemY=" + schemY + " w=" + s.width + " h=" + s.height + " plansInQueue=" + unitPlans.size + " added=" + added);
 
                 String skipData = desc.substring("autobuild-v2:".length());
                 if (skipData.isEmpty()) continue;
@@ -449,20 +454,20 @@ public class AutoBuild {
     }
 
     private static boolean verifyPlacement(Schematic s, Queue<BuildPlan> plans, int schemX, int schemY) {
-        int matches = 0;
+        int matches = 0, total = 0;
         for (Schematic.Stile stile : s.tiles) {
             if (stile.block == Blocks.coreBastion) continue;
+            total++;
             int wx = schemX - s.width / 2 + stile.x;
             int wy = schemY - s.height / 2 + stile.y;
             for (BuildPlan plan : plans) {
                 if (plan.x == wx && plan.y == wy && plan.block == stile.block) {
                     matches++;
-                    if (matches >= 2) return true;
                     break;
                 }
             }
         }
-        return false;
+        return total > 0 && matches >= Math.max(3, total / 4);
     }
 
     private static void parseDescription() {

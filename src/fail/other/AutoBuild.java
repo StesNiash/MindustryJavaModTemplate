@@ -59,6 +59,7 @@ public class AutoBuild {
     public static final Seq<String> preAssignedTiles = new Seq<>();
     private static boolean hookInitialized = false;
     private static final Seq<String> processedPlacements = new Seq<>();
+    private static int prevPlanCount = -1;
 
     static {
         forOPVP = Core.settings.getBool("autobuild-opvp", false);
@@ -346,8 +347,20 @@ public class AutoBuild {
             Queue<BuildPlan> unitPlans = Vars.player.unit().plans;
             if (unitPlans == null || unitPlans.isEmpty()) {
                 processedPlacements.clear();
+                prevPlanCount = 0;
                 return;
             }
+
+            int currentCount = unitPlans.size;
+            if (prevPlanCount < 0) {
+                prevPlanCount = currentCount;
+                return;
+            }
+            if (currentCount < prevPlanCount + 2) {
+                prevPlanCount = currentCount;
+                return;
+            }
+            prevPlanCount = currentCount;
 
             InputHandler input = Vars.control.input;
 

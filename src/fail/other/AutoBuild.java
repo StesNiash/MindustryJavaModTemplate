@@ -2,6 +2,7 @@
 package fail.other;
 
 import arc.Core;
+import arc.Events;
 import arc.Graphics;
 import arc.graphics.Color;
 import arc.input.KeyCode;
@@ -31,9 +32,12 @@ import java.util.Iterator;
 import mindustry.Vars;
 import mindustry.content.Blocks;
 import mindustry.ctype.MappableContent;
+import mindustry.entities.units.BuildPlan;
+import mindustry.game.EventType;
 import mindustry.game.Schematic;
 import mindustry.gen.Icon;
 import mindustry.gen.Tex;
+import mindustry.input.InputHandler;
 import mindustry.ui.Styles;
 import mindustry.ui.dialogs.BaseDialog;
 import mindustry.ui.dialogs.SchematicsDialog;
@@ -49,6 +53,9 @@ public class AutoBuild {
    public static int index = 0;
     public static String saveName = "autoBuild";
     public static boolean forOPVP = false;
+    public static final Seq<String> preAssignedTiles = new Seq<>();
+    private static Schematic lastAutoBuildSchematic;
+    private static boolean hookInitialized = false;
 
     static {
         forOPVP = Core.settings.getBool("autobuild-opvp", false);
@@ -57,8 +64,9 @@ public class AutoBuild {
     public AutoBuild() {
    }
 
-   public static void menu() {
-      listDialog.addCloseButton();
+    public static void menu() {
+       initPlacementHook();
+       listDialog.addCloseButton();
       Vars.ui.menufrag.addButton("Auto build", Icon.hammer, () -> {
          showList();
       });
@@ -120,8 +128,9 @@ public class AutoBuild {
       int var2 = schematic.height;
       float var3 = Math.min(((float)var0.getWidth() * 0.8F - 128.0F) / (float)var1, (float)var0.getHeight() * 0.8F / (float)var2);
       Table var4 = dialog.cont;
-      var4.clear();
-      final LogicGroup var5 = logicGroups.size == 0 ? new LogicGroup((Schematic.Stile)null) : (LogicGroup)logicGroups.get(index);
+       var4.clear();
+       parseDescription();
+       final LogicGroup var5 = logicGroups.size == 0 ? new LogicGroup((Schematic.Stile)null) : (LogicGroup)logicGroups.get(index);
       WidgetGroup var6 = new WidgetGroup();
       Iterator var7 = schematic.tiles.iterator();
 
@@ -134,68 +143,54 @@ public class AutoBuild {
          var11.touchable = Touchable.enabled;
          var11.setOrigin(1);
          var11.setRotation((float)(90 * var8.rotation));
-         var11.setColor(var5.color(var8));
-         var11.addListener(new InputListener() {
-            public boolean touchDown(InputEvent var1, float var2, float var3, int var4, KeyCode var5x) {
-               Color var6 = var11.color;
-               if (var5x == KeyCode.mouseLeft) {
-                  int var7;
-                  if (var6.equals(Color.white)) {
-                     if (var8.block == Blocks.microProcessor) {
-                        for(var7 = 0; var7 < AutoBuild.logicGroups.size; ++var7) {
-                           if (((LogicGroup)AutoBuild.logicGroups.get(var7)).core == var8) {
-                              AutoBuild.index = var7;
-                              Time.runTask(1.0F, () -> {
-                                 AutoBuild.show();
-                              });
-          return true;
-       }
-       
-
-    }
-
-                        AutoBuild.logicGroups.add(new LogicGroup(var8));
-                        AutoBuild.index = AutoBuild.logicGroups.size - 1;
-                        Time.runTask(1.0F, () -> {
-                           AutoBuild.show();
-                        });
-                        return true;
-                     }
-
-                     var11.setColor(Color.green);
-                     var5.add(var8);
-                  } else if (var6.equals(Color.green)) {
-                     var11.setColor(Color.white);
-                     var5.remove(var8);
-                  } else if (var6.equals(Color.red)) {
-                     AutoBuild.logicGroups.remove(AutoBuild.index);
-                     AutoBuild.index = 0;
-                     Time.runTask(1.0F, () -> {
-                        AutoBuild.show();
-                     });
-                    } else if (var6.equals(Color.purple) && var8.block == Blocks.microProcessor) {
-                       for(var7 = 0; var7 < AutoBuild.logicGroups.size; ++var7) {
-                          if (((LogicGroup)AutoBuild.logicGroups.get(var7)).core == var8) {
-                             AutoBuild.index = var7;
-                             Time.runTask(1.0F, () -> {
-                                AutoBuild.show();
-                             });
-                             return true;
-                          }
-                       }
-
-                       AutoBuild.logicGroups.add(new LogicGroup(var8));
-                       AutoBuild.index = AutoBuild.logicGroups.size - 1;
-                       Time.runTask(1.0F, () -> {
-                          AutoBuild.show();
-                       });
-                       return true;
-                    }
-                } else if (var5x == KeyCode.mouseRight && var6.equals(Color.white)) {
+          var11.setColor(var5.color(var8));
+          if (!var5.has(var8) && preAssignedTiles.contains(var8.x + "," + var8.y)) {
+             var11.setColor(Color.green);
+          }
+          var11.addListener(new InputListener() {
+             public boolean touchDown(InputEvent var1, float var2, float var3, int var4, KeyCode var5x) {
+                Color var6 = var11.color;
+                if (var5x == KeyCode.mouseLeft) {
+                   if (var5.has(var8)) {
+                      String coord = var8.x + "," + var8.y;
+                      var5.remove(var8);
+                      var11.setColor(preAssignedTiles.contains(coord) ? Color.green : Color.white);
+                   } else if (var6.equals(Color.red)) {
+                      AutoBuild.logicGroups.remove(AutoBuild.index);
+                      AutoBuild.index = 0;
+                      Time.runTask(1.0F, () -> AutoBuild.show());
+                   } else if (var6.equals(Color.purple) && var8.block == Blocks.microProcessor) {
+                      for(int var7 = 0; var7 < AutoBuild.logicGroups.size; ++var7) {
+                         if (((LogicGroup)AutoBuild.logicGroups.get(var7)).core == var8) {
+                            AutoBuild.index = var7;
+                            Time.runTask(1.0F, () -> AutoBuild.show());
+                            return true;
+                         }
+                      }
+                      AutoBuild.logicGroups.add(new LogicGroup(var8));
+                      AutoBuild.index = AutoBuild.logicGroups.size - 1;
+                      Time.runTask(1.0F, () -> AutoBuild.show());
+                      return true;
+                   } else {
+                      if (var8.block == Blocks.microProcessor) {
+                         for(int var7 = 0; var7 < AutoBuild.logicGroups.size; ++var7) {
+                            if (((LogicGroup)AutoBuild.logicGroups.get(var7)).core == var8) {
+                               AutoBuild.index = var7;
+                               Time.runTask(1.0F, () -> AutoBuild.show());
+                               return true;
+                            }
+                         }
+                         AutoBuild.logicGroups.add(new LogicGroup(var8));
+                         AutoBuild.index = AutoBuild.logicGroups.size - 1;
+                         Time.runTask(1.0F, () -> AutoBuild.show());
+                         return true;
+                      }
+                      var11.setColor(Color.green);
+                      var5.add(var8);
+                   }
+                } else if (var5x == KeyCode.mouseRight && !var5.has(var8) && !preAssignedTiles.contains(var8.x + "," + var8.y)) {
                    var5.vec = var8;
-                   Time.runTask(1.0F, () -> {
-                      AutoBuild.show();
-                   });
+                   Time.runTask(1.0F, () -> AutoBuild.show());
                 }
 
                 return false;
@@ -304,48 +299,121 @@ public class AutoBuild {
             var0.add(var4.copy());
          }
 
-         var1 = schematic.tiles.iterator();
+          var1 = schematic.tiles.iterator();
 
-         while(true) {
-            label31:
-            while(var1.hasNext()) {
-               Schematic.Stile var8 = (Schematic.Stile)var1.next();
-               Iterator var10 = logicGroups.iterator();
+          while(true) {
+             label31:
+             while(var1.hasNext()) {
+                Schematic.Stile var8 = (Schematic.Stile)var1.next();
+                Iterator var10 = logicGroups.iterator();
 
-               while(var10.hasNext()) {
-                  LogicGroup var12 = (LogicGroup)var10.next();
-                  if (var12.has(var8)) {
-                     continue label31;
-                  }
-               }
-
-               var0.add(var8.copy());
-            }
-
-            int var7 = schematic.width;
-            int var9 = schematic.height;
-            var0.add(new Schematic.Stile(Blocks.coreBastion, -3, -3, (Object)null, (byte)0));
-            var0.add(new Schematic.Stile(Blocks.coreBastion, var7 + 1, -3, (Object)null, (byte)0));
-            var0.add(new Schematic.Stile(Blocks.coreBastion, -3, var9 + 1, (Object)null, (byte)0));
-            var0.add(new Schematic.Stile(Blocks.coreBastion, var7 + 1, var9 + 1, (Object)null, (byte)0));
-            Schematic var11 = new Schematic(var0, StringMap.of(new Object[]{"name", saveName}), var7, var9);
-            var11.labels.add("autoBuild");
-            if (!logicGroups.isEmpty()) {
-                StringBuilder data = new StringBuilder();
-                for (LogicGroup group : logicGroups) {
-                    data.append(group.core.x).append(",").append(group.core.y).append(",");
-                    data.append(group.vec.x).append(",").append(group.vec.y).append(":");
-                    data.append(group.encodeLinks()).append("|");
+                while(var10.hasNext()) {
+                   LogicGroup var12 = (LogicGroup)var10.next();
+                   if (var12.core == var8 || var12.vec == var8) {
+                      continue label31;
+                   }
                 }
-                var11.labels.add("autobuild-data:" + data.toString());
-            }
-            Vars.schematics.add(var11);
-            return;
-         }
-      }
-   }
 
-   public static class LogicGroup {
+                var0.add(var8.copy());
+             }
+
+             int var7 = schematic.width;
+             int var9 = schematic.height;
+             var0.add(new Schematic.Stile(Blocks.coreBastion, -3, -3, (Object)null, (byte)0));
+             var0.add(new Schematic.Stile(Blocks.coreBastion, var7 + 1, -3, (Object)null, (byte)0));
+             var0.add(new Schematic.Stile(Blocks.coreBastion, -3, var9 + 1, (Object)null, (byte)0));
+             var0.add(new Schematic.Stile(Blocks.coreBastion, var7 + 1, var9 + 1, (Object)null, (byte)0));
+             Schematic var11 = new Schematic(var0, StringMap.of(new Object[]{"name", saveName}), var7, var9);
+             var11.labels.add("autoBuild");
+             var11.tags.put("description", "autobuild-v2:" + encodeSkipCoords());
+             lastAutoBuildSchematic = var11;
+             Vars.schematics.add(var11);
+             return;
+          }
+      }
+    }
+
+    public static void initPlacementHook() {
+        if (hookInitialized) return;
+        hookInitialized = true;
+
+        Events.on(EventType.BuildSelectEvent.class, (EventType.BuildSelectEvent event) -> {
+            if (event.breaking || event.tile == null) return;
+
+            try {
+                InputHandler input = Vars.control.input;
+                if (input == null) return;
+
+                for (Schematic s : Vars.schematics.all()) {
+                    if (!s.labels.contains("autoBuild")) continue;
+                    String desc = s.tags.get("description", "");
+                    if (!desc.startsWith("autobuild-v2:")) continue;
+
+                    int schemX = Reflect.get(InputHandler.class, input, "schematicX");
+                    int schemY = Reflect.get(InputHandler.class, input, "schematicY");
+
+                    String skipData = desc.substring("autobuild-v2:".length());
+                    if (skipData.isEmpty()) continue;
+
+                    for (String coord : skipData.split(";")) {
+                        if (coord.isEmpty()) continue;
+                        String[] parts = coord.split(",");
+                        if (parts.length < 2) continue;
+                        int tileX = Integer.parseInt(parts[0].trim());
+                        int tileY = Integer.parseInt(parts[1].trim());
+
+                        int worldX = schemX - s.width / 2 + tileX;
+                        int worldY = schemY - s.height / 2 + tileY;
+
+                        if (event.tile.x == worldX && event.tile.y == worldY) {
+                            try { Vars.player.unit().removeBuild(worldX, worldY, false); } catch (Exception ignored) {}
+                            event.tile.setBlock(Blocks.air);
+
+                            Object planTree = Reflect.get(InputHandler.class, input, "playerPlanTree");
+                            if (planTree != null) {
+                                for (Schematic.Stile stile : s.tiles) {
+                                    if (stile.x == tileX && stile.y == tileY) {
+                                        Reflect.invoke(planTree.getClass(), planTree, "insert", new Object[]{new BuildPlan(worldX, worldY, stile.rotation, stile.block, stile.config)});
+                                        break;
+                                    }
+                                }
+                            }
+                            return;
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+        });
+    }
+
+    private static void parseDescription() {
+        preAssignedTiles.clear();
+        if (schematic == null) return;
+        String desc = schematic.tags.get("description", "");
+        if (desc.isEmpty() || !desc.startsWith("autobuild-v2:")) return;
+
+        String data = desc.substring("autobuild-v2:".length());
+        if (data.isEmpty()) return;
+
+        String[] coords = data.split(";");
+        for (String coord : coords) {
+            if (coord.isEmpty()) continue;
+            preAssignedTiles.add(coord);
+        }
+    }
+
+    private static String encodeSkipCoords() {
+        StringBuilder sb = new StringBuilder();
+        for (LogicGroup group : logicGroups) {
+            for (CodeLink link : group.links) {
+                sb.append(link.tileX).append(",").append(link.tileY).append(";");
+            }
+        }
+        if (sb.length() > 0) sb.setLength(sb.length() - 1);
+        return sb.toString();
+    }
+
+    public static class LogicGroup {
       public static final int[][] sectors = new int[][]{{0, 1, 2, 3, 4, 5, 6, 7}, {1, 0, 3, 2, 5, 4, 7, 6}, {6, 3, 0, 5, 2, 7, 4, 1}, {3, 6, 5, 0, 7, 2, 1, 4}, {4, 5, 6, 7, 0, 1, 2, 3}, {5, 4, 7, 6, 1, 0, 3, 2}, {2, 7, 4, 1, 6, 3, 0, 5}, {7, 2, 1, 4, 3, 6, 5, 0}};
       public static final String[] vec8 = new String[]{"op add x @thisx offsetX\nop add y @thisy offsetY\nprint \"by \uf7e5=файл=\uf7bf\"\n", "op add x @thisx offsetY\nop add y @thisy offsetX\nop add rotation rotation 1\n", "op sub x @thisx offsetY\nop add y @thisy offsetX\nop add rotation rotation 1\n", "op sub x @thisx offsetX\nop add y @thisy offsetY\nprint \"by \uf7e5=файл=\uf7bf\"\n", "op sub x @thisx offsetX\nop sub y @thisy offsetY\nop add rotation rotation 2\n", "op sub x @thisx offsetY\nop sub y @thisy offsetX\nop add rotation rotation 3\n", "op add x @thisx offsetY\nop sub y @thisy offsetX\nop add rotation rotation 3\n", "op add x @thisx offsetX\nop sub y @thisy offsetY\nop add rotation rotation 2\n"};
       public final Schematic.Stile core;

@@ -29,6 +29,7 @@ import arc.util.Log;
 import arc.util.Scaling;
 import arc.util.Time;
 import arc.util.Reflect;
+import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Iterator;
 import mindustry.Vars;
@@ -358,10 +359,17 @@ public class AutoBuild {
                 int schemX = -1, schemY = -1;
                 for (BuildPlan plan : unitPlans) {
                     if (plan.block == null) continue;
+                    if (plan.block == Blocks.coreBastion) continue;
                     for (Schematic.Stile stile : s.tiles) {
                         if (stile.block != plan.block) continue;
-                        schemX = plan.x + s.width / 2 - stile.x;
-                        schemY = plan.y + s.height / 2 - stile.y;
+                        if (stile.block == Blocks.coreBastion) continue;
+                        int candidateX = plan.x + s.width / 2 - stile.x;
+                        int candidateY = plan.y + s.height / 2 - stile.y;
+                        if (!verifyPlacement(s, unitPlans, candidateX, candidateY)) continue;
+                        String candidateKey = candidateX + "," + candidateY + "," + s.width + "," + s.height + "," + desc;
+                        if (processedPlacements.contains(candidateKey)) continue;
+                        schemX = candidateX;
+                        schemY = candidateY;
                         break;
                     }
                     if (schemX != -1) break;
@@ -387,9 +395,7 @@ public class AutoBuild {
                     if (schemX == -1) continue;
                 }
 
-                String placementKey = schemX + "," + schemY + "," + s.width + "," + s.height + "," + desc;
-                if (processedPlacements.contains(placementKey)) continue;
-                processedPlacements.add(placementKey);
+                processedPlacements.add(schemX + "," + schemY + "," + s.width + "," + s.height + "," + desc);
 
                 Log.info("AutoBuild: autobuild schematic detected, schemX=" + schemX + " schemY=" + schemY + " w=" + s.width + " h=" + s.height + " plansInQueue=" + unitPlans.size);
 
@@ -414,10 +420,22 @@ public class AutoBuild {
                             if (planTree != null) {
                                 for (Schematic.Stile stile : s.tiles) {
                                     if (stile.x == tileX && stile.y == tileY) {
-                                        Reflect.invoke(planTree.getClass(), planTree, "insert", new Object[]{
-                                            new BuildPlan(worldX, worldY, stile.rotation, stile.block, stile.config)
-                                        });
-                                        Log.info("AutoBuild: phantom inserted at (" + worldX + "," + worldY + ")");
+                                        BuildPlan phantom = new BuildPlan(worldX, worldY, stile.rotation, stile.block, stile.config);
+                                        try {
+                                            Method insertMethod = null;
+                                            for (Method m : planTree.getClass().getMethods()) {
+                                                if (m.getName().equals("insert") && m.getParameterCount() == 1) {
+                                                    insertMethod = m;
+                                                    break;
+                                                }
+                                            }
+                                            if (insertMethod != null) {
+                                                insertMethod.invoke(planTree, phantom);
+                                                Log.info("AutoBuild: phantom inserted at (" + worldX + "," + worldY + ")");
+                                            }
+                                        } catch (Exception e2) {
+                                            Log.info("AutoBuild: phantom insert err at (" + worldX + "," + worldY + "): " + e2);
+                                        }
                                         break;
                                     }
                                 }
@@ -429,6 +447,23 @@ public class AutoBuild {
                 }
             }
         });
+    }
+
+    private static boolean verifyPlacement(Schematic s, Queue<BuildPlan> plans, int schemX, int schemY) {
+        int matches = 0;
+        for (Schematic.Stile stile : s.tiles) {
+            if (stile.block == Blocks.coreBastion) continue;
+            int wx = schemX - s.width / 2 + stile.x;
+            int wy = schemY - s.height / 2 + stile.y;
+            for (BuildPlan plan : plans) {
+                if (plan.x == wx && plan.y == wy && plan.block == stile.block) {
+                    matches++;
+                    if (matches >= 2) return true;
+                    break;
+                }
+            }
+        }
+        return false;
     }
 
     private static void parseDescription() {

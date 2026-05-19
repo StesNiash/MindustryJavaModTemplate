@@ -344,6 +344,9 @@ public class AutoBuild {
         Events.run(EventType.Trigger.update, () -> {
             if (Vars.player == null || Vars.player.unit() == null) return;
 
+            InputHandler input = Vars.control.input;
+            if (input == null) return;
+
             Queue<BuildPlan> unitPlans = Vars.player.unit().plans;
             if (unitPlans == null || unitPlans.isEmpty()) {
                 processedPlacements.clear();
@@ -356,13 +359,17 @@ public class AutoBuild {
                 prevPlanCount = currentCount;
                 return;
             }
-            if (currentCount < prevPlanCount + 2) {
+            if (currentCount <= prevPlanCount) {
                 prevPlanCount = currentCount;
                 return;
             }
             prevPlanCount = currentCount;
 
-            InputHandler input = Vars.control.input;
+            Seq<BuildPlan> selectPlans;
+            try {
+                selectPlans = Reflect.get(InputHandler.class, input, "selectPlans");
+            } catch (Exception e) { return; }
+            if (selectPlans == null || selectPlans.isEmpty()) return;
 
             for (Schematic s : Vars.schematics.all()) {
                 if (!s.labels.contains("autoBuild")) continue;
@@ -370,43 +377,28 @@ public class AutoBuild {
                 if (!desc.startsWith("autobuild-v2:")) continue;
 
                 int schemX = -1, schemY = -1;
-                for (BuildPlan plan : unitPlans) {
-                    if (plan.block == null) continue;
-                    if (plan.block == Blocks.coreBastion) continue;
-                    for (Schematic.Stile stile : s.tiles) {
-                        if (stile.block != plan.block) continue;
-                        if (stile.block == Blocks.coreBastion) continue;
-                        int candidateX = plan.x + s.width / 2 - stile.x;
-                        int candidateY = plan.y + s.height / 2 - stile.y;
-                        if (!verifyPlacement(s, unitPlans, candidateX, candidateY)) continue;
-                        String candidateKey = candidateX + "," + candidateY + "," + s.width + "," + s.height + "," + desc;
-                        if (processedPlacements.contains(candidateKey)) continue;
-                        schemX = candidateX;
-                        schemY = candidateY;
-                        break;
-                    }
-                    if (schemX != -1) break;
-                }
-
-                if (schemX == -1) {
-                    if (input == null) continue;
-                    Seq<BuildPlan> selectPlans;
-                    try {
-                        selectPlans = Reflect.get(InputHandler.class, input, "selectPlans");
-                    } catch (Exception e) { continue; }
-                    if (selectPlans == null || selectPlans.isEmpty()) continue;
-                    for (Schematic.Stile stile : s.tiles) {
-                        if (stile.block != Blocks.coreBastion) continue;
-                        for (BuildPlan plan : selectPlans) {
-                            if (plan.block != Blocks.coreBastion) continue;
-                            schemX = plan.x + s.width / 2 - stile.x;
-                            schemY = plan.y + s.height / 2 - stile.y;
+                for (BuildPlan sp : selectPlans) {
+                    if (sp.block == null || sp.block == Blocks.coreBastion) continue;
+                    for (BuildPlan up : unitPlans) {
+                        if (up.block != sp.block) continue;
+                        if (up.x != sp.x || up.y != sp.y) continue;
+                        for (Schematic.Stile stile : s.tiles) {
+                            if (stile.block != sp.block) continue;
+                            if (stile.block == Blocks.coreBastion) continue;
+                            int candX = sp.x + s.width / 2 - stile.x;
+                            int candY = sp.y + s.height / 2 - stile.y;
+                            if (!verifyPlacement(s, unitPlans, candX, candY)) continue;
+                            String key = candX + "," + candY + "," + s.width + "," + s.height + "," + desc;
+                            if (processedPlacements.contains(key)) continue;
+                            schemX = candX;
+                            schemY = candY;
                             break;
                         }
                         if (schemX != -1) break;
                     }
-                    if (schemX == -1) continue;
+                    if (schemX != -1) break;
                 }
+                if (schemX == -1) continue;
 
                 processedPlacements.add(schemX + "," + schemY + "," + s.width + "," + s.height + "," + desc);
 

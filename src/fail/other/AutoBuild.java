@@ -24,6 +24,7 @@ import arc.scene.ui.layout.Table;
 import arc.scene.ui.layout.WidgetGroup;
 import arc.struct.Seq;
 import arc.struct.StringMap;
+import arc.util.Log;
 import arc.util.Scaling;
 import arc.util.Time;
 import arc.util.Reflect;
@@ -54,7 +55,6 @@ public class AutoBuild {
     public static String saveName = "autoBuild";
     public static boolean forOPVP = false;
     public static final Seq<String> preAssignedTiles = new Seq<>();
-    private static Schematic lastAutoBuildSchematic;
     private static boolean hookInitialized = false;
 
     static {
@@ -326,7 +326,6 @@ public class AutoBuild {
              Schematic var11 = new Schematic(var0, StringMap.of(new Object[]{"name", saveName}), var7, var9);
              var11.labels.add("autoBuild");
              var11.tags.put("description", "autobuild-v2:" + encodeSkipCoords());
-             lastAutoBuildSchematic = var11;
              Vars.schematics.add(var11);
              return;
           }
@@ -336,53 +335,69 @@ public class AutoBuild {
     public static void initPlacementHook() {
         if (hookInitialized) return;
         hookInitialized = true;
+        Log.info("AutoBuild: initPlacementHook registered");
 
         Events.on(EventType.BuildSelectEvent.class, (EventType.BuildSelectEvent event) -> {
-            if (event.breaking || event.tile == null) return;
+            if (event.breaking || event.tile == null) {
+                Log.info("AutoBuild: BuildSelectEvent skipped (breaking=" + event.breaking + ", tile=" + event.tile + ")");
+                return;
+            }
+            Log.info("AutoBuild: BuildSelectEvent fired at tile (" + event.tile.x + "," + event.tile.y + ")");
 
             try {
                 InputHandler input = Vars.control.input;
-                if (input == null) return;
+                if (input == null) { Log.info("AutoBuild: input null"); return; }
+
+                int schemX = Reflect.get(input.getClass(), input, "schematicX");
+                int schemY = Reflect.get(input.getClass(), input, "schematicY");
+                Log.info("AutoBuild: schematicX=" + schemX + " schematicY=" + schemY);
 
                 for (Schematic s : Vars.schematics.all()) {
                     if (!s.labels.contains("autoBuild")) continue;
                     String desc = s.tags.get("description", "");
                     if (!desc.startsWith("autobuild-v2:")) continue;
 
-                    int schemX = Reflect.get(InputHandler.class, input, "schematicX");
-                    int schemY = Reflect.get(InputHandler.class, input, "schematicY");
-
                     String skipData = desc.substring("autobuild-v2:".length());
                     if (skipData.isEmpty()) continue;
 
+                    Log.info("AutoBuild: checking schematic '" + s.name() + "' skipData=" + skipData);
+                    boolean matched = false;
                     for (String coord : skipData.split(";")) {
                         if (coord.isEmpty()) continue;
                         String[] parts = coord.split(",");
                         if (parts.length < 2) continue;
                         int tileX = Integer.parseInt(parts[0].trim());
                         int tileY = Integer.parseInt(parts[1].trim());
-
                         int worldX = schemX - s.width / 2 + tileX;
                         int worldY = schemY - s.height / 2 + tileY;
 
                         if (event.tile.x == worldX && event.tile.y == worldY) {
-                            try { Vars.player.unit().removeBuild(worldX, worldY, false); } catch (Exception ignored) {}
+                            matched = true;
+                            Log.info("AutoBuild: MATCH! Removing and adding phantom");
+                            try { Vars.player.unit().removeBuild(worldX, worldY, false); } catch (Exception e2) { Log.info("AutoBuild: removeBuild err: " + e2); }
                             event.tile.setBlock(Blocks.air);
 
                             Object planTree = Reflect.get(InputHandler.class, input, "playerPlanTree");
                             if (planTree != null) {
                                 for (Schematic.Stile stile : s.tiles) {
                                     if (stile.x == tileX && stile.y == tileY) {
-                                        Reflect.invoke(planTree.getClass(), planTree, "insert", new Object[]{new BuildPlan(worldX, worldY, stile.rotation, stile.block, stile.config)});
+                                        try {
+                                            Reflect.invoke(planTree.getClass(), planTree, "insert", new Object[]{new BuildPlan(worldX, worldY, stile.rotation, stile.block, stile.config)});
+                                            Log.info("AutoBuild: phantom inserted");
+                                        } catch (Exception e3) { Log.info("AutoBuild: phantom insert err: " + e3); }
                                         break;
                                     }
                                 }
-                            }
-                            return;
+                            } else { Log.info("AutoBuild: planTree null"); }
+                            break;
                         }
                     }
+                    if (matched) return;
                 }
-            } catch (Exception ignored) {}
+                Log.info("AutoBuild: no match for any autobuild schematic");
+            } catch (Exception e) {
+                Log.info("AutoBuild: error: " + e);
+            }
         });
     }
 

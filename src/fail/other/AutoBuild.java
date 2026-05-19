@@ -347,20 +347,47 @@ public class AutoBuild {
             try {
                 InputHandler input = Vars.control.input;
                 if (input == null) { Log.info("AutoBuild: input null"); return; }
+                Log.info("AutoBuild: input class = " + input.getClass().getName());
+                Log.info("AutoBuild: BuildSelectEvent tile=" + event.tile.x + "," + event.tile.y);
 
-                int schemX = Reflect.get(input.getClass(), input, "schematicX");
-                int schemY = Reflect.get(input.getClass(), input, "schematicY");
-                Log.info("AutoBuild: schematicX=" + schemX + " schematicY=" + schemY);
+                Seq<BuildPlan> selectPlans = Reflect.get(InputHandler.class, input, "selectPlans");
+                Log.info("AutoBuild: selectPlans size=" + (selectPlans != null ? selectPlans.size : "null"));
 
                 for (Schematic s : Vars.schematics.all()) {
                     if (!s.labels.contains("autoBuild")) continue;
                     String desc = s.tags.get("description", "");
                     if (!desc.startsWith("autobuild-v2:")) continue;
 
+                    Log.info("AutoBuild: checking schematic '" + s.name() + "'");
+                    if (selectPlans == null || selectPlans.size == 0) {
+                        Log.info("AutoBuild: selectPlans empty, skip");
+                        continue;
+                    }
+
+                    int schemX = -1, schemY = -1;
+                    for (Schematic.Stile stile : s.tiles) {
+                        if (stile.block != Blocks.coreBastion) continue;
+                        for (BuildPlan plan : selectPlans) {
+                            if (plan.block != Blocks.coreBastion) continue;
+                            int calcX = plan.x + s.width / 2 - stile.x;
+                            int calcY = plan.y + s.height / 2 - stile.y;
+                            Log.info("AutoBuild: bastion plan (" + plan.x + "," + plan.y + ") stile (" + stile.x + "," + stile.y + ") -> calc schem (" + calcX + "," + calcY + ")");
+                            if (schemX == -1) { schemX = calcX; schemY = calcY; }
+                            break;
+                        }
+                        if (schemX != -1) break;
+                    }
+
+                    if (schemX == -1) {
+                        Log.info("AutoBuild: could not find bastion in selectPlans for schematic");
+                        continue;
+                    }
+                    Log.info("AutoBuild: calculated schemX=" + schemX + " schemY=" + schemY);
+
                     String skipData = desc.substring("autobuild-v2:".length());
                     if (skipData.isEmpty()) continue;
 
-                    Log.info("AutoBuild: checking schematic '" + s.name() + "' skipData=" + skipData);
+                    Log.info("AutoBuild: skipData=" + skipData);
                     boolean matched = false;
                     for (String coord : skipData.split(";")) {
                         if (coord.isEmpty()) continue;
@@ -370,6 +397,8 @@ public class AutoBuild {
                         int tileY = Integer.parseInt(parts[1].trim());
                         int worldX = schemX - s.width / 2 + tileX;
                         int worldY = schemY - s.height / 2 + tileY;
+
+                        Log.info("AutoBuild: skip (" + tileX + "," + tileY + ") -> world (" + worldX + "," + worldY + ")");
 
                         if (event.tile.x == worldX && event.tile.y == worldY) {
                             matched = true;

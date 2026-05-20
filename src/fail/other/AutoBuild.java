@@ -6,6 +6,7 @@ import arc.Events;
 import arc.Graphics;
 import arc.graphics.Color;
 import arc.graphics.g2d.Draw;
+import arc.input.KeyBind;
 import arc.input.KeyCode;
 import arc.math.Mathf;
 import arc.scene.event.InputEvent;
@@ -59,6 +60,8 @@ public class AutoBuild {
     public static String saveName = "autoBuild";
     public static boolean forOPVP = false;
     public static boolean autobuildEnabled = true;
+    public static KeyBind toggleKeybind;
+    public static KeyBind clearKeybind;
     public static final Seq<String> preAssignedTiles = new Seq<>();
     private static boolean hookInitialized = false;
     private static final Seq<String> processedPlacements = new Seq<>();
@@ -73,7 +76,14 @@ public class AutoBuild {
     public AutoBuild() {
    }
 
+    public static void initKeybinds() {
+       if (toggleKeybind != null) return;
+       toggleKeybind = KeyBind.add("autobuild_toggle", KeyCode.rightBracket, "AutoBuild");
+       clearKeybind = KeyBind.add("autobuild_clear", KeyCode.backslash, "AutoBuild");
+    }
+
     public static void menu() {
+       initKeybinds();
        initPlacementHook();
        listDialog.addCloseButton();
       Vars.ui.menufrag.addButton("Auto build", Icon.hammer, () -> {
@@ -392,14 +402,21 @@ public class AutoBuild {
         Events.run(EventType.Trigger.update, () -> {
             if (Vars.player == null || Vars.player.unit() == null) return;
 
-            if (Core.input.keyTap(KeyCode.rightBracket)) {
+            if (Core.input.keyTap(toggleKeybind)) {
                 autobuildEnabled = !autobuildEnabled;
                 Core.settings.put("autobuild-enabled", autobuildEnabled);
                 if (!autobuildEnabled) phantomBlocks.clear();
+                if (Vars.ui != null) {
+                    if (autobuildEnabled) {
+                        Vars.ui.hudfrag.setHudText("[green]\u26CF AutoBuild[]");
+                    } else {
+                        Vars.ui.hudfrag.toggleHudText(false);
+                    }
+                }
                 Log.info("AutoBuild: " + (autobuildEnabled ? "enabled" : "disabled"));
             }
 
-            if (Core.input.keyTap(KeyCode.backslash)) {
+            if (Core.input.keyTap(clearKeybind)) {
                 phantomBlocks.clear();
                 Log.info("AutoBuild: phantom blocks manually cleared");
             }
@@ -529,6 +546,10 @@ public class AutoBuild {
                     }
                 }
             }
+
+            if (!phantomBlocks.isEmpty() && autobuildEnabled && Vars.ui != null) {
+                Vars.ui.hudfrag.setHudText("[green]\u26CF AutoBuild[]");
+            }
         });
     }
 
@@ -568,7 +589,7 @@ public class AutoBuild {
                 }
             }
         }
-        return planTotal > 0 && (float)planMatches / planTotal >= 0.75f;
+        return planTotal > 0 && (float)planMatches / planTotal >= 0.95f;
     }
 
     private static void parseDescription() {

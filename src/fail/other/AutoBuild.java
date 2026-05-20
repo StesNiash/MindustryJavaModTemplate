@@ -462,6 +462,7 @@ public class AutoBuild {
                                     int candX = sp.x - relPos[0];
                                     int candY = sp.y - relPos[1];
                                     if (!verifyPlacement(s, unitPlans, candX, candY, r, flipped)) continue;
+                                    if (!reverseVerifyPlacement(s, unitPlans, candX, candY, r, flipped)) continue;
                                     String key = candX + "," + candY + "," + s.width + "," + s.height + "," + desc + "," + r + "," + f;
                                     if (processedPlacements.contains(key)) continue;
                                     schemX = candX;
@@ -539,6 +540,24 @@ public class AutoBuild {
             }
         }
         return total > 0 && matches >= Math.max(3, total / 4);
+    }
+
+    private static boolean reverseVerifyPlacement(Schematic s, Queue<BuildPlan> plans, int schemX, int schemY, int rotation, boolean flipped) {
+        int planMatches = 0, planTotal = 0;
+        for (BuildPlan plan : plans) {
+            if (plan.breaking) continue;
+            if (plan.block == null || plan.block == Blocks.coreBastion) continue;
+            planTotal++;
+            for (Schematic.Stile stile : s.tiles) {
+                if (stile.block == Blocks.coreBastion) continue;
+                int[] wp = stileToWorld(stile, schemX, schemY, s.width, s.height, rotation, flipped);
+                if (plan.x == wp[0] && plan.y == wp[1] && plan.block == stile.block) {
+                    planMatches++;
+                    break;
+                }
+            }
+        }
+        return planTotal > 0 && (float)planMatches / planTotal >= 0.75f;
     }
 
     private static void parseDescription() {

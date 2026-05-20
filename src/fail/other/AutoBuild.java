@@ -390,13 +390,27 @@ public class AutoBuild {
         Events.run(EventType.Trigger.update, () -> {
             if (Vars.player == null || Vars.player.unit() == null) return;
 
+            if (Core.input.keyTap(KeyCode.backslash)) {
+                phantomBlocks.clear();
+                Log.info("AutoBuild: phantom blocks manually cleared");
+            }
+
+            if (!phantomBlocks.isEmpty() && Vars.world != null) {
+                for (int i = phantomBlocks.size - 1; i >= 0; i--) {
+                    PhantomBlock pb = phantomBlocks.get(i);
+                    mindustry.world.Tile tile = Vars.world.tile(pb.worldX, pb.worldY);
+                    if (tile != null && tile.build != null && tile.build.block == pb.block) {
+                        phantomBlocks.remove(i);
+                    }
+                }
+            }
+
             InputHandler input = Vars.control.input;
             if (input == null) return;
 
             Queue<BuildPlan> unitPlans = Vars.player.unit().plans;
             if (unitPlans == null || unitPlans.isEmpty()) {
                 processedPlacements.clear();
-                phantomBlocks.clear();
                 prevPlanCount = 0;
                 return;
             }

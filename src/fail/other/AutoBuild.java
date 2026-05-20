@@ -5,6 +5,7 @@ import arc.Core;
 import arc.Events;
 import arc.Graphics;
 import arc.graphics.Color;
+import arc.graphics.g2d.Draw;
 import arc.input.KeyCode;
 import arc.math.Mathf;
 import arc.scene.event.InputEvent;
@@ -40,6 +41,7 @@ import mindustry.game.EventType;
 import mindustry.game.Schematic;
 import mindustry.gen.Icon;
 import mindustry.gen.Tex;
+import mindustry.graphics.Layer;
 import mindustry.input.InputHandler;
 import mindustry.ui.Styles;
 import mindustry.ui.dialogs.BaseDialog;
@@ -60,6 +62,7 @@ public class AutoBuild {
     private static boolean hookInitialized = false;
     private static final Seq<String> processedPlacements = new Seq<>();
     private static int prevPlanCount = -1;
+    private static final Seq<PhantomBlock> phantomBlocks = new Seq<>();
 
     static {
         forOPVP = Core.settings.getBool("autobuild-opvp", false);
@@ -370,6 +373,20 @@ public class AutoBuild {
         hookInitialized = true;
         Log.info("AutoBuild: initPlacementHook registered (Trigger.update)");
 
+        Events.run(EventType.Trigger.draw, () -> {
+            if (phantomBlocks.isEmpty()) return;
+            Draw.z(Layer.plans + 0.1f);
+            for (PhantomBlock pb : phantomBlocks) {
+                Draw.mixcol(Color.green, 0.2f + Mathf.absin(Time.globalTime, 6f, 0.15f));
+                Draw.alpha(0.38f);
+                Draw.rect(pb.block.fullIcon,
+                    pb.worldX * 8 + pb.block.offset,
+                    pb.worldY * 8 + pb.block.offset,
+                    pb.block.rotate ? pb.rotation * 90f : 0f);
+            }
+            Draw.reset();
+        });
+
         Events.run(EventType.Trigger.update, () -> {
             if (Vars.player == null || Vars.player.unit() == null) return;
 
@@ -379,6 +396,7 @@ public class AutoBuild {
             Queue<BuildPlan> unitPlans = Vars.player.unit().plans;
             if (unitPlans == null || unitPlans.isEmpty()) {
                 processedPlacements.clear();
+                phantomBlocks.clear();
                 prevPlanCount = 0;
                 return;
             }
@@ -464,6 +482,9 @@ public class AutoBuild {
                             int[] worldPos = stileToWorld(stile, schemX, schemY, s.width, s.height, schemRotation, schemFlipped);
                             int worldX = worldPos[0];
                             int worldY = worldPos[1];
+
+                            int phantomRotation = Mathf.mod(stile.rotation + schemRotation, 4);
+                            phantomBlocks.add(new PhantomBlock(stile.block, worldX, worldY, phantomRotation));
 
                             try {
                                 StringBuilder sb = new StringBuilder();
@@ -1085,9 +1106,22 @@ public class AutoBuild {
                    show();
                    dialog.show();
                    info.hide();
-                }).size(210.0F, 64.0F);
-            }
-         }
-      });
-   }
+                 }).size(210.0F, 64.0F);
+             }
+          }
+       });
+    }
+
+    private static class PhantomBlock {
+        final Block block;
+        final int worldX, worldY;
+        final int rotation;
+
+        PhantomBlock(Block block, int worldX, int worldY, int rotation) {
+            this.block = block;
+            this.worldX = worldX;
+            this.worldY = worldY;
+            this.rotation = rotation;
+        }
+    }
 }

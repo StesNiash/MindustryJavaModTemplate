@@ -58,6 +58,7 @@ public class AutoBuild {
    public static int index = 0;
     public static String saveName = "autoBuild";
     public static boolean forOPVP = false;
+    public static boolean autobuildEnabled = true;
     public static final Seq<String> preAssignedTiles = new Seq<>();
     private static boolean hookInitialized = false;
     private static final Seq<String> processedPlacements = new Seq<>();
@@ -66,6 +67,7 @@ public class AutoBuild {
 
     static {
         forOPVP = Core.settings.getBool("autobuild-opvp", false);
+        autobuildEnabled = Core.settings.getBool("autobuild-enabled", true);
     }
 
     public AutoBuild() {
@@ -374,7 +376,7 @@ public class AutoBuild {
         Log.info("AutoBuild: initPlacementHook registered (Trigger.update)");
 
         Events.run(EventType.Trigger.draw, () -> {
-            if (phantomBlocks.isEmpty()) return;
+            if (!autobuildEnabled || phantomBlocks.isEmpty()) return;
             Draw.z(Layer.plans + 0.1f);
             for (PhantomBlock pb : phantomBlocks) {
                 Draw.mixcol(Color.green, 0.2f + Mathf.absin(Time.globalTime, 6f, 0.15f));
@@ -389,6 +391,13 @@ public class AutoBuild {
 
         Events.run(EventType.Trigger.update, () -> {
             if (Vars.player == null || Vars.player.unit() == null) return;
+
+            if (Core.input.keyTap(KeyCode.rightBracket)) {
+                autobuildEnabled = !autobuildEnabled;
+                Core.settings.put("autobuild-enabled", autobuildEnabled);
+                if (!autobuildEnabled) phantomBlocks.clear();
+                Log.info("AutoBuild: " + (autobuildEnabled ? "enabled" : "disabled"));
+            }
 
             if (Core.input.keyTap(KeyCode.backslash)) {
                 phantomBlocks.clear();
@@ -436,6 +445,8 @@ public class AutoBuild {
                 selectPlans = Reflect.get(InputHandler.class, input, "selectPlans");
             } catch (Exception e) { return; }
             if (selectPlans == null || selectPlans.isEmpty()) return;
+
+            if (!autobuildEnabled) return;
 
             for (Schematic s : Vars.schematics.all()) {
                 if (!s.labels.contains("autoBuild")) continue;

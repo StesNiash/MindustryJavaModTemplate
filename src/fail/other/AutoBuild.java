@@ -333,38 +333,36 @@ public class AutoBuild {
     private static int[] stileToWorld(Schematic.Stile stile, int schemX, int schemY, int sWidth, int sHeight, int rotation, boolean flipped) {
         int TS = 8;
         int S = stile.block.size;
-        int offset = S * TS / 2;
+        int blockOffset = (S % 2 == 0) ? TS / 2 : 0;
 
-        int planX = stile.x + schemX - sWidth / 2;
-        int planY = stile.y + schemY - sHeight / 2;
+        int ox = sWidth / 2;
+        int oy = sHeight / 2;
 
-        float bx = (planX - schemX) * TS + offset;
-        float by = (planY - schemY) * TS + offset;
+        float wx = (stile.x - ox) * TS + blockOffset;
+        float wy = (stile.y - oy) * TS + blockOffset;
+
+        for (int r = 0; r < rotation; r++) {
+            float temp = wx;
+            wx = wy;
+            wy = -temp;
+        }
+
+        int tileX = Math.round((wx - blockOffset) / TS) + ox;
+        int tileY = Math.round((wy - blockOffset) / TS) + oy;
+
+        int effW = (rotation % 2 == 0) ? sWidth : sHeight;
+        int effH = (rotation % 2 == 0) ? sHeight : sWidth;
+
+        int worldX = tileX + schemX - effW / 2;
+        int worldY = tileY + schemY - effH / 2;
 
         if (flipped) {
-            int newPlanX = -planX + 2 * schemX - S;
-            bx = (newPlanX - schemX) * TS + offset;
+            int origin = schemX * TS;
+            float value = -(worldX * TS - origin + blockOffset) + origin;
+            worldX = (int)((value - blockOffset) / TS);
         }
 
-        if (rotation > 0) {
-            for (int r = 0; r < rotation; r++) {
-                float oldBx = bx;
-                bx = by;
-                by = -oldBx;
-            }
-            int resultX = Math.round((bx - offset) / TS) + schemX;
-            int resultY;
-            if (S == 2) {
-                resultY = Math.round((by - offset) / TS) + schemY;
-            } else {
-                resultY = Math.round(by / TS) + schemY;
-            }
-            return new int[]{resultX, resultY};
-        } else {
-            int resultX = Math.round((bx - offset) / TS) + schemX;
-            int resultY = Math.round((by - offset) / TS) + schemY;
-            return new int[]{resultX, resultY};
-        }
+        return new int[]{worldX, worldY};
     }
 
     public static void initPlacementHook() {

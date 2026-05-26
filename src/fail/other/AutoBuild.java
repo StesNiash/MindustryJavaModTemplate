@@ -442,20 +442,22 @@ public class AutoBuild {
             }
 
             int currentCount = unitPlans.size;
+            
+            // Always check for new schematic placements, not just when queue was empty
+            boolean shouldCheck = false;
             if (prevPlanCount < 0) {
                 prevPlanCount = currentCount;
                 return;
             }
             int added = currentCount - prevPlanCount;
-            if (added <= 0) {
-                prevPlanCount = currentCount;
-                return;
-            }
-            if (added < 3) {
-                prevPlanCount = currentCount;
-                return;
+            // Check if plans were added (for new placements) OR if queue was non-empty before
+            // This fixes the issue where schematics placed while queue is non-empty are not processed
+            if (added >= 3 || (added > 0 && prevPlanCount > 0)) {
+                shouldCheck = true;
             }
             prevPlanCount = currentCount;
+            
+            if (!shouldCheck) return;
 
             Seq<BuildPlan> selectPlans;
             try {

@@ -473,7 +473,7 @@ public class AutoBuild {
                 int schemX = -1, schemY = -1;
                 int schemRotation = 0;
                 boolean schemFlipped = false;
-
+               
                 outer:
                 for (BuildPlan sp : selectPlans) {
                     if (sp.block == null || sp.block == Blocks.coreBastion) continue;
@@ -503,7 +503,7 @@ public class AutoBuild {
                         }
                     }
                 }
-
+                
                 if (schemX == -1) continue;
 
                 processedPlacements.add(schemX + "," + schemY + "," + s.width + "," + s.height + "," + desc + "," + schemRotation + "," + (schemFlipped ? 1 : 0));
@@ -575,10 +575,25 @@ public class AutoBuild {
     }
 
     private static boolean reverseVerifyPlacement(Schematic s, Queue<BuildPlan> plans, int schemX, int schemY, int rotation, boolean flipped) {
+        int minWx = Integer.MAX_VALUE, maxWx = Integer.MIN_VALUE;
+        int minWy = Integer.MAX_VALUE, maxWy = Integer.MIN_VALUE;
+        boolean hasTiles = false;
+        for (Schematic.Stile stile : s.tiles) {
+            if (stile.block == Blocks.coreBastion) continue;
+            hasTiles = true;
+            int[] wp = stileToWorld(stile, schemX, schemY, s.width, s.height, rotation, flipped);
+            if (wp[0] < minWx) minWx = wp[0];
+            if (wp[0] > maxWx) maxWx = wp[0];
+            if (wp[1] < minWy) minWy = wp[1];
+            if (wp[1] > maxWy) maxWy = wp[1];
+        }
+        if (!hasTiles) return false;
+
         int planMatches = 0, planTotal = 0;
         for (BuildPlan plan : plans) {
             if (plan.breaking) continue;
             if (plan.block == null || plan.block == Blocks.coreBastion) continue;
+            if (plan.x < minWx || plan.x > maxWx || plan.y < minWy || plan.y > maxWy) continue;
             planTotal++;
             for (Schematic.Stile stile : s.tiles) {
                 if (stile.block == Blocks.coreBastion) continue;
@@ -589,7 +604,7 @@ public class AutoBuild {
                 }
             }
         }
-        return planTotal > 0 && (float)planMatches / planTotal >= 0.95f;
+        return planTotal > 0 && (float)planMatches / planTotal >= 0.98f;
     }
 
     private static void parseDescription() {

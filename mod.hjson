@@ -1,8 +1,8 @@
 #the mod name as displayed in-game
-displayName: "Java Mod Template"
+displayName: "No Player Collision"
 
 #the internal name of your mod
-name: "example-java-mod"
+name: "no-player-collision"
 
 #your name
 author: "You"
@@ -11,7 +11,7 @@ author: "You"
 main: "example.ExampleJavaMod"
 
 #the mod description as seen in the mod dialog
-description: "A Mindustry Java mod template."
+description: "Disables collision for the player's unit so it can pass through other units."
 
 #the mod version
 version: 1.0
@@ -21,3 +21,5 @@ minGameVersion: 154
 
 #this is a java mod
 java: true
+
+visible: false

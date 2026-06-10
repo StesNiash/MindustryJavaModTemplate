@@ -22,4 +22,4 @@ minGameVersion: 154
 #this is a java mod
 java: true
 
-visible: false
+hidden: true

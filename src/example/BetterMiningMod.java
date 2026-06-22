@@ -55,6 +55,17 @@ public class BetterMiningMod extends Mod {
             }
         });
 
+        Events.on(TapEvent.class, e -> {
+            if (e.player != player) return;
+            if (!Core.settings.getBool(SETTING_INVENTORY_MINE, true)) return;
+            Unit unit = player.unit();
+            if (unit == null || !unit.canMine()) return;
+            if (unit.validMine(e.tile) && !unit.acceptsItem(unit.getMineResult(e.tile))) {
+                unit.mineTile(e.tile);
+                trackedMineTile = e.tile;
+            }
+        });
+
         Events.run(Trigger.update, this::update);
     }
 
@@ -81,35 +92,39 @@ public class BetterMiningMod extends Mod {
         }
 
         if (Core.settings.getBool(SETTING_INVENTORY_MINE, true)) {
-            ensureMiningContinuation(unit);
+            restoreMiningAfterInventoryBlock(unit);
         }
 
         handleAutoMineToggle(unit);
     }
 
-    private void ensureMiningContinuation(Unit unit) {
-        Tile tile = unit.mining() ? unit.mineTile() : trackedMineTile;
-        if (tile == null) return;
+    private void restoreMiningAfterInventoryBlock(Unit unit) {
+        if (unit.mining()) return;
+        if (trackedMineTile == null) return;
+        if (!unit.validMine(trackedMineTile)) return;
 
-        Item mined = unit.getMineResult(tile);
+        Item mined = unit.getMineResult(trackedMineTile);
         if (mined == null) return;
+        if (unit.acceptsItem(mined)) return;
 
-        if (!unit.acceptsItem(mined)) {
-            Building core = unit.closestCore();
-            if (core != null && unit.within(core.x(), core.y(), mineTransferRange)) {
-                int accepted = core.acceptStack(unit.item(), unit.stack().amount, unit);
-                if (accepted > 0) {
-                    Call.transferItemTo(unit, unit.item(), accepted,
-                        tile.worldx() + Mathf.range(tilesize / 2f),
-                        tile.worldy() + Mathf.range(tilesize / 2f), core);
-                }
-            }
+        Building core = unit.closestCore();
+        boolean nearCore = core != null && unit.within(core.x(), core.y(), mineTransferRange);
+
+        if (nearCore && core.acceptStack(mined, 1, unit) > 0) {
+            unit.mineTile(trackedMineTile);
+            unit.mineTimer(0f);
+            return;
+        }
+
+        if (unit.hasItem() && unit.item() == mined) {
+            unit.stack().amount = Math.max(unit.stack().amount - 1, 0);
+        } else if (unit.hasItem() && unit.item() != mined) {
             unit.clearItem();
+        }
 
-            if (!unit.mining() && unit.validMine(tile) && unit.acceptsItem(mined)) {
-                unit.mineTile(tile);
-                trackedMineTile = tile;
-            }
+        if (unit.acceptsItem(mined)) {
+            unit.mineTile(trackedMineTile);
+            unit.mineTimer(0f);
         }
     }
 

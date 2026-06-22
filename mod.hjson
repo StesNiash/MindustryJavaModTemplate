@@ -1,5 +1,5 @@
 #the mod name as displayed in-game
-displayName: "Java Mod Template"
+displayName: "Better Mining"
 
 #the internal name of your mod
 name: "example-java-mod"
@@ -8,10 +8,10 @@ name: "example-java-mod"
 author: "You"
 
 #the fully qualified main class of the mod
-main: "example.ExampleJavaMod"
+main: "example.BetterMiningMod"
 
 #the mod description as seen in the mod dialog
-description: "A Mindustry Java mod template."
+description: "Enables mining with a full inventory and auto-mining with configurable ores via keybind."
 
 #the mod version
 version: 1.0

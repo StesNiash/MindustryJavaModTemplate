@@ -5,7 +5,7 @@ displayName: "Better Mining"
 name: "example-java-mod"
 
 #your name
-author: "You"
+author: "SiliconDevil"
 
 #the fully qualified main class of the mod
 main: "example.BetterMiningMod"

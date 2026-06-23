@@ -30,6 +30,8 @@ public class BetterMiningMod extends Mod {
     private Seq<Item> targetOres = new Seq<>();
     private Interval scanTimer = new Interval();
     private Tile trackedMineTile;
+    private Tile lastTapTile;
+    private long lastTapTime;
     private final KeyBind autoMineKey;
 
     public BetterMiningMod() {
@@ -60,10 +62,18 @@ public class BetterMiningMod extends Mod {
             if (!Core.settings.getBool(SETTING_INVENTORY_MINE, true)) return;
             Unit unit = player.unit();
             if (unit == null || !unit.canMine()) return;
-            if (unit.validMine(e.tile) && !unit.acceptsItem(unit.getMineResult(e.tile))) {
+            if (!unit.validMine(e.tile)) return;
+            Item mined = unit.getMineResult(e.tile);
+            if (mined == null || unit.acceptsItem(mined)) return;
+
+            boolean doubleTap = Core.settings.getBool("doubletapmine");
+            boolean isDoubleClick = doubleTap && e.tile == lastTapTile && Time.timeSinceMillis(lastTapTime) < 500;
+            if (!doubleTap || isDoubleClick) {
                 unit.mineTile(e.tile);
                 trackedMineTile = e.tile;
             }
+            lastTapTile = e.tile;
+            lastTapTime = Time.millis();
         });
 
         Events.run(Trigger.update, this::update);

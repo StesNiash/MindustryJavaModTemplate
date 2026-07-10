@@ -22,8 +22,8 @@ public class SiliconDevilUnitBuildMod extends Mod {
     private IntMap<Seq<BuildPlan>> assignedPlans = new IntMap<>();
     private IntMap<Long> lastUpdateTime = new IntMap<>();
     private Seq<BuildPlan> configQueue = new Seq<>();
-    private ObjectMap<Long, Integer> configAttempts = new ObjectMap<>();
-    private ObjectMap<Long, Object> initialConfigs = new ObjectMap<>();
+    private ObjectMap<Long, Integer> configFailures = new ObjectMap<>();
+    private ObjectMap<Long, Long> lastConfigAttempt = new ObjectMap<>();
 
     public SiliconDevilUnitBuildMod() {
         Log.info("Loaded SiliconDevil Unit Build Mod constructor.");
@@ -65,9 +65,6 @@ public class SiliconDevilUnitBuildMod extends Mod {
                 if (plan.config == null) continue;
                 if (plan.block instanceof PowerNode) continue;
                 if (!isQueued(plan.x, plan.y)) {
-                    long pos = packCoord(plan.x, plan.y);
-                    configAttempts.remove(pos);
-                    initialConfigs.remove(pos);
                     configQueue.insert(0, plan);
                 }
             }
@@ -129,8 +126,8 @@ public class SiliconDevilUnitBuildMod extends Mod {
             if (plan.block instanceof PowerNode) continue;
             if (!isQueued(plan.x, plan.y)) {
                 long pos = packCoord(plan.x, plan.y);
-                configAttempts.remove(pos);
-                initialConfigs.remove(pos);
+                configFailures.remove(pos);
+                lastConfigAttempt.remove(pos);
                 configQueue.insert(0, plan);
             }
         }
@@ -157,49 +154,45 @@ public class SiliconDevilUnitBuildMod extends Mod {
             if (blockInWorld) {
                 long pos = packCoord(plan.x, plan.y);
                 Object currentConfig = tile.build.config();
+                boolean isProcessor = plan.block instanceof mindustry.world.blocks.logic.LogicBlock;
 
-                if (configsEqual(currentConfig, plan.config)) {
-                    configAttempts.remove(pos);
-                    initialConfigs.remove(pos);
+                // Processor: non-null config means code was written
+                if (isProcessor && currentConfig != null) {
+                    configFailures.remove(pos);
+                    lastConfigAttempt.remove(pos);
                     continue;
                 }
 
-                int attempts = configAttempts.get(pos, 0);
-
-                if (attempts == 0) {
-                    if (!configApplied) {
-                        initialConfigs.put(pos, currentConfig);
-                        Log.info("Call.tileConfig at (@, @)", plan.x, plan.y);
-                        Call.tileConfig(Vars.player, tile.build, plan.config);
-                        configApplied = true;
-                        configAttempts.put(pos, 1);
-                    }
-                    remaining.add(plan);
-                } else {
-                    if (!configsEqual(initialConfigs.get(pos), currentConfig)) {
-                        configAttempts.remove(pos);
-                        initialConfigs.remove(pos);
-                        continue;
-                    }
-
-                    if (attempts >= 3) {
-                        configAttempts.remove(pos);
-                        initialConfigs.remove(pos);
-                        continue;
-                    }
-
-                    if (!configApplied) {
-                        Log.info("Call.tileConfig retry at (@, @) attempt @", plan.x, plan.y, attempts + 1);
-                        Call.tileConfig(Vars.player, tile.build, plan.config);
-                        configApplied = true;
-                    }
-                    configAttempts.put(pos, attempts + 1);
-                    remaining.add(plan);
+                // Other blocks: exact match with target
+                if (configsEqual(currentConfig, plan.config)) {
+                    configFailures.remove(pos);
+                    lastConfigAttempt.remove(pos);
+                    continue;
                 }
+
+                long now = Time.millis();
+                int failures = configFailures.get(pos, 0);
+                long lastAttempt = lastConfigAttempt.get(pos, 0L);
+
+                long backoff = failures == 0 ? 0
+                    : Math.min(1000L * (1L << Math.min(failures - 1, 5)), 30000L);
+
+                if (now - lastAttempt < backoff) {
+                    remaining.add(plan);
+                    continue;
+                }
+
+                if (!configApplied) {
+                    Log.info("Call.tileConfig at (@, @) fail @", plan.x, plan.y, failures);
+                    Call.tileConfig(Vars.player, tile.build, plan.config);
+                    lastConfigAttempt.put(pos, now);
+                    configFailures.put(pos, failures + 1);
+                    configApplied = true;
+                }
+                remaining.add(plan);
             } else if (buildQueue.contains(plan)) {
-                long pos = packCoord(plan.x, plan.y);
-                configAttempts.remove(pos);
-                initialConfigs.remove(pos);
+                configFailures.remove(packCoord(plan.x, plan.y));
+                lastConfigAttempt.remove(packCoord(plan.x, plan.y));
                 remaining.add(plan);
             }
         }

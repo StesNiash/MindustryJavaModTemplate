@@ -8,7 +8,7 @@ main: "silicondevil.SiliconDevilUnitBuildMod"
 
 description: "A mod that enables units to build structures from the player's build queue using logic processors."
 
-version: 1.0
+version: 2.0
 
 minGameVersion: 154
 

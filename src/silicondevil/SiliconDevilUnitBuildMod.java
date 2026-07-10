@@ -136,6 +136,13 @@ public class SiliconDevilUnitBuildMod extends Mod {
         }
     }
 
+    private static boolean configsEqual(Object a, Object b) {
+        if (a instanceof byte[] && b instanceof byte[]) {
+            return Arrays.equals((byte[])a, (byte[])b);
+        }
+        return Objects.equals(a, b);
+    }
+
     private void processConfigQueue() {
         if (configQueue.size == 0) return;
 
@@ -151,8 +158,7 @@ public class SiliconDevilUnitBuildMod extends Mod {
                 long pos = packCoord(plan.x, plan.y);
                 Object currentConfig = tile.build.config();
 
-                // Check 1: direct config match
-                if (Objects.equals(currentConfig, plan.config)) {
+                if (configsEqual(currentConfig, plan.config)) {
                     configAttempts.remove(pos);
                     initialConfigs.remove(pos);
                     continue;
@@ -161,7 +167,6 @@ public class SiliconDevilUnitBuildMod extends Mod {
                 int attempts = configAttempts.get(pos, 0);
 
                 if (attempts == 0) {
-                    // first time: snapshot and apply only if slot available
                     if (!configApplied) {
                         initialConfigs.put(pos, currentConfig);
                         Log.info("Call.tileConfig at (@, @)", plan.x, plan.y);
@@ -171,21 +176,18 @@ public class SiliconDevilUnitBuildMod extends Mod {
                     }
                     remaining.add(plan);
                 } else {
-                    // Check 2: config changed from initial (application had effect)
-                    if (!Objects.equals(initialConfigs.get(pos), currentConfig)) {
+                    if (!configsEqual(initialConfigs.get(pos), currentConfig)) {
                         configAttempts.remove(pos);
                         initialConfigs.remove(pos);
                         continue;
                     }
 
-                    // Check 3: retry limit exceeded
                     if (attempts >= 3) {
                         configAttempts.remove(pos);
                         initialConfigs.remove(pos);
                         continue;
                     }
 
-                    // retry: apply again and increment attempts
                     if (!configApplied) {
                         Log.info("Call.tileConfig retry at (@, @) attempt @", plan.x, plan.y, attempts + 1);
                         Call.tileConfig(Vars.player, tile.build, plan.config);
@@ -209,6 +211,18 @@ public class SiliconDevilUnitBuildMod extends Mod {
         return ((long)x << 32) | (y & 0xffffffffL);
     }
 
+    private static boolean batchEquals(Seq<BuildPlan> a, Seq<BuildPlan> b) {
+        if (a == b) return true;
+        if (a == null || b == null) return false;
+        if (a.size != b.size) return false;
+        for (int i = 0; i < a.size; i++) {
+            BuildPlan pa = a.get(i);
+            BuildPlan pb = b.get(i);
+            if (pa.x != pb.x || pa.y != pb.y || pa.block != pb.block) return false;
+        }
+        return true;
+    }
+
     private void assignBuildTasks() {
         Seq<BuildPlan> queue = getPlayerBuildQueue();
         IntMap<Seq<BuildPlan>> newAssignments = new IntMap<>();
@@ -219,41 +233,18 @@ public class SiliconDevilUnitBuildMod extends Mod {
             LogicBuild processor = entry.value;
             Seq<BuildPlan> oldBatch = assignedPlans.get(pid);
 
-            boolean batchResolved = true;
-            if (oldBatch != null && oldBatch.size > 0) {
-                for (BuildPlan plan : oldBatch) {
-                    if (plan == null) continue;
-                    if (!isPlanCompleted(plan) && queue.contains(plan)) {
-                        batchResolved = false;
-                        break;
-                    }
-                }
-            }
-
-            if (!batchResolved) {
-                newAssignments.put(pid, oldBatch);
-                if (oldBatch != null) {
-                    for (BuildPlan plan : oldBatch) {
-                        if (plan != null) unassignedPlans.remove(plan);
-                    }
-                }
-                continue;
-            }
-
-            // Only update processor code when there are new blocks to assign
-            if (unassignedPlans.size > 0) {
+            int slots = Math.min(ModConfig.maxBlocksPerProcessor(), unassignedPlans.size);
+            if (slots > 0) {
                 Seq<BuildPlan> newBatch = new Seq<>();
-                int slots = Math.min(ModConfig.maxBlocksPerProcessor(), unassignedPlans.size);
                 for (int i = 0; i < slots; i++) {
                     newBatch.add(unassignedPlans.pop());
                 }
-
                 newAssignments.put(pid, newBatch);
-                addToConfigQueue(newBatch);
-                updateProcessorCodeMultiple(processor, newBatch);
+                if (!batchEquals(oldBatch, newBatch)) {
+                    addToConfigQueue(newBatch);
+                    updateProcessorCodeMultiple(processor, newBatch);
+                }
             } else {
-                // No new blocks — keep processor code intact so decoder still works
-                // for units with flags (building previously assigned blocks)
                 newAssignments.put(pid, oldBatch != null ? oldBatch : new Seq<>());
             }
         }

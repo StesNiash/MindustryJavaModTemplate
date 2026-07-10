@@ -240,29 +240,34 @@ public class SiliconDevilUnitBuildMod extends Mod {
                 continue;
             }
 
-            Seq<BuildPlan> newBatch = new Seq<>();
-            int slots = Math.min(ModConfig.maxBlocksPerProcessor(), unassignedPlans.size);
-            for (int i = 0; i < slots; i++) {
-                newBatch.add(unassignedPlans.pop());
-            }
+            // Only update processor code when there are new blocks to assign
+            if (unassignedPlans.size > 0) {
+                Seq<BuildPlan> newBatch = new Seq<>();
+                int slots = Math.min(ModConfig.maxBlocksPerProcessor(), unassignedPlans.size);
+                for (int i = 0; i < slots; i++) {
+                    newBatch.add(unassignedPlans.pop());
+                }
 
-            newAssignments.put(pid, newBatch);
-            addToConfigQueue(newBatch);
-            updateProcessorCodeMultiple(processor, newBatch);
+                newAssignments.put(pid, newBatch);
+                addToConfigQueue(newBatch);
+                updateProcessorCodeMultiple(processor, newBatch);
+            } else {
+                // No new blocks — keep processor code intact so decoder still works
+                // for units with flags (building previously assigned blocks)
+                newAssignments.put(pid, oldBatch != null ? oldBatch : new Seq<>());
+            }
         }
 
         assignedPlans = newAssignments;
     }
 
     private void updateProcessorCodeMultiple(LogicBuild processor, Seq<BuildPlan> plans) {
-        if (processor.code == null) return;
-
         long now = Time.millis();
         long last = lastUpdateTime.get(processor.id, 0L);
         if (now - last < ModConfig.processorUpdateCooldownMs()) return;
 
         String newCode = generateProcessorCode(plans);
-        if (newCode.equals(processor.code)) return;
+        if (processor.code != null && newCode.equals(processor.code)) return;
 
         byte[] oldConfig = processor.config();
         processor.code = newCode;
@@ -292,23 +297,94 @@ public class SiliconDevilUnitBuildMod extends Mod {
     }
 
     private String generateProcessorCode(Seq<BuildPlan> plans) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(ModConfig.codePrefix()).append("\n");
         int count = Math.min(plans.size, ModConfig.maxBlocksPerProcessor());
+        int mapH = Vars.world.height();
+
+        StringBuilder sb = new StringBuilder();
+
+        if (count == 0) {
+            // Preamble (lines 0-4)
+            sb.append("print \"UB_2 Made by SiliconDevil\"\n");
+            sb.append("ubind @mega\n");
+            sb.append("sensor uFlag @unit @flag\n");
+            sb.append("jump 5 notEqual uFlag 0\n");
+            sb.append("end\n");
+
+            // Decoder (lines 5-18)
+            sb.append("op idiv bx uFlag ").append(mapH).append("\n");
+            sb.append("op mod by uFlag ").append(mapH).append("\n");
+            sb.append("ucontrol move bx by 0 0 0\n");
+            sb.append("ucontrol within bx by 5 bNear 0\n");
+            sb.append("sensor uBuilding @unit @building\n");
+            sb.append("op notEqual notBuilding uBuilding 1\n");
+            sb.append("op land crashed notBuilding bNear\n");
+            sb.append("jump 17 equal crashed 1\n");
+            sb.append("ucontrol getBlock bx by bt bb 0\n");
+            sb.append("jump 1 equal bb null\n");
+            sb.append("sensor bbmh bb @maxHealth\n");
+            sb.append("jump 1 equal bbmh 10\n");
+            sb.append("ucontrol flag 0 0 0 0 0\n");
+            sb.append("end\n");
+
+            return sb.toString();
+        }
+
+        int PREAMBLE = 6;
+        int DECODER = 14;
+        int HEADER = 1;
+
+        int decoderAddr = PREAMBLE;                    // 6
+        int headerAddr = PREAMBLE + DECODER;           // 20
+        int rebindAddr = 1;                             // ubind @mega
+        int clearAddr = decoderAddr + 12;               // 18 — ucontrol flag
+
+        // Preamble (lines 0-5)
+        sb.append("print \"UB_2 Made by SiliconDevil\"\n");
+        sb.append("ubind @mega\n");
+        sb.append("sensor uFlag @unit @flag\n");
+        sb.append("jump ").append(decoderAddr).append(" notEqual uFlag 0\n");
+        sb.append("jump ").append(headerAddr).append(" equal dist_finish null\n");
+        sb.append("end\n");
+
+        // Decoder (lines 6-19)
+        sb.append("op idiv bx uFlag ").append(mapH).append("\n");
+        sb.append("op mod by uFlag ").append(mapH).append("\n");
+        sb.append("ucontrol move bx by 0 0 0\n");
+        sb.append("ucontrol within bx by 5 bNear 0\n");
+        sb.append("sensor uBuilding @unit @building\n");
+        sb.append("op notEqual notBuilding uBuilding 1\n");
+        sb.append("op land crashed notBuilding bNear\n");
+        sb.append("jump ").append(clearAddr).append(" equal crashed 1\n");
+        sb.append("ucontrol getBlock bx by bt bb 0\n");
+        sb.append("jump ").append(rebindAddr).append(" equal bb null\n");
+        sb.append("sensor bbmh bb @maxHealth\n");
+        sb.append("jump ").append(rebindAddr).append(" equal bbmh 10\n");
+        sb.append("ucontrol flag 0 0 0 0 0\n");
+        sb.append("end\n");
+
+        // Block header (line 20)
+        sb.append("set @counter next_block\n");
+
+        // Block sections (5 lines each), start at line 21
         for (int i = 0; i < count; i++) {
             BuildPlan plan = plans.get(i);
             String blockConst = "@" + plan.block.name;
             String configStr = configToString(plan.config);
             int rotation = plan.rotation;
-            sb.append("\nBlock").append(i + 1).append(":\n");
-            sb.append("    ucontrol move ").append(plan.x).append(" ").append(plan.y).append(" 0 0 0\n");
-            sb.append("    ucontrol build ").append(plan.x).append(" ").append(plan.y).append(" ").append(blockConst).append(" ").append(rotation).append(" ").append(configStr).append("\n");
-            sb.append("    ucontrol getBlock ").append(plan.x).append(" ").append(plan.y).append(" bt 0 0\n");
-            sb.append("    jump End").append(i + 1).append(" equal bt ").append(blockConst).append("\n");
-            sb.append("    end\n");
-            sb.append("End").append(i + 1).append(":\n");
-            sb.append("    set current @counter\n");
+            int flag = plan.x * mapH + plan.y;
+
+            sb.append("ucontrol flag ").append(flag).append(" 0 0 0 0\n");
+            sb.append("ucontrol build ").append(plan.x).append(" ").append(plan.y).append(" ").append(blockConst).append(" ").append(rotation).append(" ").append(configStr).append("\n");
+            sb.append("ucontrol move ").append(plan.x).append(" ").append(plan.y).append(" ").append(blockConst).append(" ").append(rotation).append(" ").append(configStr).append("\n");
+
+            if (i < count - 1) {
+                sb.append("op add next_block @counter 1\n");
+            } else {
+                sb.append("set dist_finish 1\n");
+            }
+            sb.append("end\n");
         }
+
         return sb.toString();
     }
 

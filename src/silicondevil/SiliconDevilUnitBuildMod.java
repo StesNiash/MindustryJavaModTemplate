@@ -296,21 +296,21 @@ public class SiliconDevilUnitBuildMod extends Mod {
         // setup: 1(jump) + 3(redist vars) + 2N(pointers) + 1(setup flag) + 1(target) = 6+2N
         // bind..jumpB0: 4 lines
         // decoder: 12 lines
-        // redist: 9 + 3(flag-clear) = 12 lines
+        // redist: 8 lines (no dist_finish)
         // dispatch: 1(op add) + 2N
-        // blocks: 5 per block
-        // calc_flag: 4
+        // blocks: 5 per block (all uniform)
+        // calc_flag: 7 (6 + end)
+        // clear_flag: 6 (5 + end)
 
         int addrBind = 6 + 2 * branchCount;
         int addrDecode = addrBind + 4;
         int addrRedist = addrDecode + 12;
-        int addrDistCheck = addrRedist + 7;      // jump dispatch equal dist_finish null
-        int addrEnd = addrRedist + 12;            // end after flag-clear
-        int addrDispatch = addrRedist + 13;       // dispatch starts
+        int addrDispatch = addrRedist + 8;
         int addrDispGp = addrDispatch + 1;
         int addrDispBp = addrDispGp + branchCount;
         int addrBlocks = addrDispBp + branchCount;
-        int addrCalcFlag = addrBlocks + totalBlocks * 5;
+        int addrCalcFlag = addrBlocks + 5 * totalBlocks;
+        int addrClearFlag = addrCalcFlag + 7;
 
         int howMuch = Math.max(totalBlocks / (branchCount * 2), 2);
 
@@ -361,21 +361,15 @@ public class SiliconDevilUnitBuildMod extends Mod {
         sb.append("sensor bbmh bb @maxHealth\n");
         sb.append("jump ").append(addrBind).append(" equal bbmh 10\n");
 
-        // ── Redistribution + flag-clear ──
+        // ── Redistribution ──
         sb.append("op mod group_id uFlag 100\n");
-        sb.append("jump ").append(addrDistCheck).append(" notEqual group_id TakeFromGroup\n");
-        sb.append("jump ").append(addrDistCheck).append(" lessThanEq HowMuch 0\n");
+        sb.append("jump ").append(addrDispatch).append(" notEqual group_id TakeFromGroup\n");
+        sb.append("jump ").append(addrDispatch).append(" lessThanEq HowMuch 0\n");
         sb.append("op mul bFlag2 bFlag 100\n");
         sb.append("op add nFlag bFlag2 GiveToGroup\n");
         sb.append("ucontrol flag nFlag 0 0 0 0\n");
         sb.append("op sub HowMuch HowMuch 1\n");
-        sb.append("jump ").append(addrDispatch).append(" equal dist_finish null\n");
-        // flag-clear: dist_finish == 1, no more blocks
-        sb.append("sensor curFlag @unit @flag\n");
-        sb.append("op mod gFlag curFlag 100\n");
-        sb.append("jump ").append(addrEnd).append(" equal curFlag gFlag\n");
-        sb.append("ucontrol flag gFlag 0 0 0 0\n");
-        sb.append("end\n");
+        sb.append("jump ").append(addrDispatch).append(" 0 0 0 0\n");
 
         // ── Dispatch ──
         sb.append("op add @counter @counter group_id\n");
@@ -402,43 +396,51 @@ public class SiliconDevilUnitBuildMod extends Mod {
                 sb.append("ucontrol build ").append(plan.x).append(" ").append(plan.y).append(" ").append(blockConst).append(" ").append(rotation).append(" ").append(configStr).append("\n");
                 sb.append("ucontrol move ").append(plan.x).append(" ").append(plan.y).append(" 0 0 0\n");
 
-                boolean isLastBlock = (b == branchCount - 1) && (j == blkInBranch - 1);
+                boolean isLastOverall = (b == branchCount - 1) && (j == blkInBranch - 1);
                 boolean isBranchEnd = (j == blkInBranch - 1);
 
-                if (isLastBlock) {
-                    sb.append("set bFlag ").append(rawPos * 100).append("\n");
-                    sb.append("set dist_finish 1\n");
-                } else {
-                    if (isBranchEnd) {
-                        // Merge: bFlag=0 → dispatch resolves next block via block_ptr[target]
-                        sb.append("set bFlag 0\n");
+                if (isBranchEnd) {
+                    if (isLastOverall) {
+                        sb.append("set bFlag ").append(rawPos * 100).append("\n");
+                        sb.append("set group_ptr").append(b).append(" ").append(addrClearFlag).append("\n");
                     } else {
-                        int nextB = b, nextJ = j + 1;
-                        BuildPlan nextPlan = branches.get(nextB).blocks.get(nextJ);
-                        int rawNext = nextPlan.x * mapH + nextPlan.y;
-                        sb.append("set bFlag ").append(rawNext * 100).append("\n");
-                    }
-
-                    if (isBranchEnd) {
+                        sb.append("set bFlag 0\n");
                         int mergeTarget = branch.mergeToIdx;
                         if (mergeTarget >= 0) {
                             sb.append("set group_ptr").append(b).append(" ").append(addrDispBp + mergeTarget).append("\n");
+                        } else {
+                            sb.append("set group_ptr").append(b).append(" ").append(addrClearFlag).append("\n");
                         }
-                    } else {
-                        int nextBlockAddr = blockAddr[bi + 1];
-                        sb.append("set block_ptr").append(b).append(" ").append(nextBlockAddr).append("\n");
                     }
-                    sb.append("set @counter ").append(addrCalcFlag).append("\n");
+                } else {
+                    int nextB = b, nextJ = j + 1;
+                    BuildPlan nextPlan = branches.get(nextB).blocks.get(nextJ);
+                    int rawNext = nextPlan.x * mapH + nextPlan.y;
+                    sb.append("set bFlag ").append(rawNext * 100).append("\n");
+                    int nextBlockAddr = blockAddr[bi + 1];
+                    sb.append("set block_ptr").append(b).append(" ").append(nextBlockAddr).append("\n");
                 }
+                sb.append("set @counter ").append(addrCalcFlag).append("\n");
                 bi++;
             }
         }
 
-        // ── calc_flag ──
+        // ── calc_flag (validate group, set bFlag as new position) ──
         sb.append("sensor uFlag @unit @flag\n");
         sb.append("op mod gFlag uFlag 100\n");
+        sb.append("jump ").append(addrCalcFlag + 4).append(" lessThan gFlag ").append(branchCount).append("\n");
+        sb.append("set gFlag 0\n");
         sb.append("op add newFlag gFlag bFlag\n");
         sb.append("ucontrol flag newFlag 0 0 0 0\n");
+        sb.append("end\n");
+
+        // ── clear_flag (clear block data, preserve group) ──
+        sb.append("sensor curFlag @unit @flag\n");
+        sb.append("op mod gFlag curFlag 100\n");
+        sb.append("jump ").append(addrClearFlag + 4).append(" lessThan gFlag ").append(branchCount).append("\n");
+        sb.append("set gFlag 0\n");
+        sb.append("ucontrol flag gFlag 0 0 0 0\n");
+        sb.append("end\n");
 
         return sb.toString();
     }

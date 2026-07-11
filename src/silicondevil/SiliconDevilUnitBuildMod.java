@@ -292,23 +292,27 @@ public class SiliconDevilUnitBuildMod extends Mod {
         Seq<BuildTreeBuilder.Branch> branches = BuildTreeBuilder.build(batch, branchCount);
         branchCount = branches.size;
 
-        // Pre-calculate addresses
-        int addrJump = 0;
-        int addrGroupInit = 1;
-        int addrBlockInit = 1 + branchCount;
-        int addrSetupDone = 1 + 2 * branchCount;
-        int addrBind = 2 + 2 * branchCount;
-        int addrSensor = addrBind + 1;
-        int addrRebind = addrBind + 2;
-        int addrDecodeB = addrBind + 3;
-        int addrJumpB0 = addrBind + 4;
-        int addrDecode = addrBind + 5;
-        int addrDistCheck = addrDecode + 14;
-        int addrEnd = addrDistCheck + 1;
-        int addrDispatch = addrEnd + 1;
+        // Address layout:
+        // setup: 1(jump) + 3(redist vars) + 2N(pointers) + 1(setup flag) + 1(target) = 6+2N
+        // bind..jumpB0: 4 lines
+        // decoder: 12 lines
+        // redist: 9 + 3(flag-clear) = 12 lines
+        // dispatch: 1(op add) + 2N
+        // blocks: 5 per block
+        // calc_flag: 4
+
+        int addrBind = 6 + 2 * branchCount;
+        int addrDecode = addrBind + 4;
+        int addrRedist = addrDecode + 12;
+        int addrDistCheck = addrRedist + 7;      // jump dispatch equal dist_finish null
+        int addrEnd = addrRedist + 12;            // end after flag-clear
+        int addrDispatch = addrRedist + 13;       // dispatch starts
         int addrDispGp = addrDispatch + 1;
         int addrDispBp = addrDispGp + branchCount;
         int addrBlocks = addrDispBp + branchCount;
+        int addrCalcFlag = addrBlocks + totalBlocks * 5;
+
+        int howMuch = Math.max(totalBlocks / (branchCount * 2), 2);
 
         // Block address table
         int[] blockAddr = new int[totalBlocks];
@@ -319,12 +323,13 @@ public class SiliconDevilUnitBuildMod extends Mod {
             }
         }
 
-        int addrCalcFlag = addrBlocks + totalBlocks * 5;
-
         StringBuilder sb = new StringBuilder();
 
-        // ── Setup ──
+        // ── Setup (auto-balancing) ──
         sb.append("jump ").append(addrBind).append(" equal setup 1\n");
+        sb.append("set TakeFromGroup 0\n");
+        sb.append("set GiveToGroup 1\n");
+        sb.append("set HowMuch ").append(howMuch).append("\n");
         for (int i = 0; i < branchCount; i++) {
             sb.append("set group_ptr").append(i).append(" ").append(addrDispBp + i).append("\n");
         }
@@ -334,15 +339,15 @@ public class SiliconDevilUnitBuildMod extends Mod {
             sb.append("set block_ptr").append(i).append(" ").append(firstBlockAddr).append("\n");
         }
         sb.append("set setup 1\n");
+        sb.append("print \"UB_2 Made by SiliconDevil\"\n");
 
-        // ── Main loop ──
+        // ── Bind + decode ──
         sb.append("ubind @mega\n");
         sb.append("sensor uFlag @unit @flag\n");
-        sb.append("jump ").append(addrBind).append(" equal uFlag 0\n");
         sb.append("op idiv bFlag uFlag 100\n");
-        sb.append("jump ").append(addrDispatch).append(" equal bFlag 0\n");
+        sb.append("jump ").append(addrRedist).append(" equal bFlag 0\n");
 
-        // ── Decoder ──
+        // ── Decoder (12 lines) ──
         sb.append("op idiv bx bFlag @maph\n");
         sb.append("op mod by bFlag @maph\n");
         sb.append("ucontrol move bx by 0 0 0\n");
@@ -350,13 +355,26 @@ public class SiliconDevilUnitBuildMod extends Mod {
         sb.append("sensor uBuilding @unit @building\n");
         sb.append("op notEqual notBuilding uBuilding 1\n");
         sb.append("op land crashed notBuilding bNear\n");
-        sb.append("jump ").append(addrDispatch).append(" equal crashed 1\n");
+        sb.append("jump ").append(addrRedist).append(" equal crashed 1\n");
         sb.append("ucontrol getBlock bx by bt bb 0\n");
         sb.append("jump ").append(addrBind).append(" equal bb null\n");
         sb.append("sensor bbmh bb @maxHealth\n");
         sb.append("jump ").append(addrBind).append(" equal bbmh 10\n");
+
+        // ── Redistribution + flag-clear ──
         sb.append("op mod group_id uFlag 100\n");
+        sb.append("jump ").append(addrDistCheck).append(" notEqual group_id TakeFromGroup\n");
+        sb.append("jump ").append(addrDistCheck).append(" lessThanEq HowMuch 0\n");
+        sb.append("op mul bFlag2 bFlag 100\n");
+        sb.append("op add nFlag bFlag2 GiveToGroup\n");
+        sb.append("ucontrol flag nFlag 0 0 0 0\n");
+        sb.append("op sub HowMuch HowMuch 1\n");
         sb.append("jump ").append(addrDispatch).append(" equal dist_finish null\n");
+        // flag-clear: dist_finish == 1, no more blocks
+        sb.append("sensor curFlag @unit @flag\n");
+        sb.append("op mod gFlag curFlag 100\n");
+        sb.append("jump ").append(addrEnd).append(" equal curFlag gFlag\n");
+        sb.append("ucontrol flag gFlag 0 0 0 0\n");
         sb.append("end\n");
 
         // ── Dispatch ──
@@ -377,6 +395,7 @@ public class SiliconDevilUnitBuildMod extends Mod {
                 BuildPlan plan = branch.blocks.get(j);
                 String blockConst = "@" + plan.block.name;
                 String configStr = configToString(plan.config);
+                if (configStr.length() > 20) configStr = configStr.substring(0, 20);
                 int rotation = plan.rotation;
                 int rawPos = plan.x * mapH + plan.y;
 
@@ -391,8 +410,7 @@ public class SiliconDevilUnitBuildMod extends Mod {
                     sb.append("set dist_finish 1\n");
                 } else {
                     if (isBranchEnd) {
-                        // Merge: next block resolved dynamically via block_ptr[target]
-                        // bFlag=0 triggers dispatch → group_ptr redirect → block_ptr
+                        // Merge: bFlag=0 → dispatch resolves next block via block_ptr[target]
                         sb.append("set bFlag 0\n");
                     } else {
                         int nextB = b, nextJ = j + 1;

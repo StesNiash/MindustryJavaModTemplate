@@ -281,93 +281,146 @@ public class SiliconDevilUnitBuildMod extends Mod {
     }
 
     private String generateProcessorCode(Seq<BuildPlan> plans) {
-        int count = Math.min(plans.size, ModConfig.maxBlocksPerProcessor());
+        int totalBlocks = Math.min(plans.size, ModConfig.maxBlocksPerProcessor());
+        if (totalBlocks == 0) return ModConfig.targetString() + "\nend\n";
+
         int mapH = Vars.world.height();
+        int branchCount = Math.min(Math.max(totalBlocks / 15, 2), 8);
+
+        Seq<BuildPlan> batch = new Seq<>();
+        for (int i = 0; i < totalBlocks; i++) batch.add(plans.get(i));
+        Seq<BuildTreeBuilder.Branch> branches = BuildTreeBuilder.build(batch, branchCount);
+        branchCount = branches.size;
+
+        // Pre-calculate addresses
+        int addrJump = 0;
+        int addrGroupInit = 1;
+        int addrBlockInit = 1 + branchCount;
+        int addrSetupDone = 1 + 2 * branchCount;
+        int addrBind = 2 + 2 * branchCount;
+        int addrSensor = addrBind + 1;
+        int addrRebind = addrBind + 2;
+        int addrDecodeB = addrBind + 3;
+        int addrJumpB0 = addrBind + 4;
+        int addrDecode = addrBind + 5;
+        int addrDistCheck = addrDecode + 14;
+        int addrEnd = addrDistCheck + 1;
+        int addrDispatch = addrEnd + 1;
+        int addrDispGp = addrDispatch + 1;
+        int addrDispBp = addrDispGp + branchCount;
+        int addrBlocks = addrDispBp + branchCount;
+
+        // Block address table
+        int[] blockAddr = new int[totalBlocks];
+        int idx = 0;
+        for (int b = 0; b < branchCount; b++) {
+            for (int j = 0; j < branches.get(b).blocks.size; j++) {
+                blockAddr[idx++] = addrBlocks + idx * 5;
+            }
+        }
+
+        int addrCalcFlag = addrBlocks + totalBlocks * 5;
 
         StringBuilder sb = new StringBuilder();
 
-        if (count == 0) {
-            // Preamble (lines 0-4)
-            sb.append("print \"UB_2 Made by SiliconDevil\"\n");
-            sb.append("ubind @mega\n");
-            sb.append("sensor uFlag @unit @flag\n");
-            sb.append("jump 5 notEqual uFlag 0\n");
-            sb.append("end\n");
-
-            // Decoder (lines 5-18)
-            sb.append("op idiv bx uFlag ").append(mapH).append("\n");
-            sb.append("op mod by uFlag ").append(mapH).append("\n");
-            sb.append("ucontrol move bx by 0 0 0\n");
-            sb.append("ucontrol within bx by 5 bNear 0\n");
-            sb.append("sensor uBuilding @unit @building\n");
-            sb.append("op notEqual notBuilding uBuilding 1\n");
-            sb.append("op land crashed notBuilding bNear\n");
-            sb.append("jump 17 equal crashed 1\n");
-            sb.append("ucontrol getBlock bx by bt bb 0\n");
-            sb.append("jump 1 equal bb null\n");
-            sb.append("sensor bbmh bb @maxHealth\n");
-            sb.append("jump 1 equal bbmh 10\n");
-            sb.append("ucontrol flag 0 0 0 0 0\n");
-            sb.append("end\n");
-
-            return sb.toString();
+        // ── Setup ──
+        sb.append("jump ").append(addrBind).append(" equal setup 1\n");
+        for (int i = 0; i < branchCount; i++) {
+            sb.append("set group_ptr").append(i).append(" ").append(addrDispBp + i).append("\n");
         }
+        for (int i = 0; i < branchCount; i++) {
+            int firstBlockAddr = addrBlocks;
+            for (int k = 0; k < i; k++) firstBlockAddr += branches.get(k).blocks.size * 5;
+            sb.append("set block_ptr").append(i).append(" ").append(firstBlockAddr).append("\n");
+        }
+        sb.append("set setup 1\n");
 
-        int PREAMBLE = 6;
-        int DECODER = 14;
-        int HEADER = 1;
-
-        int decoderAddr = PREAMBLE;                    // 6
-        int headerAddr = PREAMBLE + DECODER;           // 20
-        int rebindAddr = 1;                             // ubind @mega
-        int clearAddr = decoderAddr + 12;               // 18 — ucontrol flag
-
-        // Preamble (lines 0-5)
-        sb.append("print \"UB_2 Made by SiliconDevil\"\n");
+        // ── Main loop ──
         sb.append("ubind @mega\n");
         sb.append("sensor uFlag @unit @flag\n");
-        sb.append("jump ").append(decoderAddr).append(" notEqual uFlag 0\n");
-        sb.append("jump ").append(headerAddr).append(" equal dist_finish null\n");
-        sb.append("end\n");
+        sb.append("jump ").append(addrBind).append(" equal uFlag 0\n");
+        sb.append("op idiv bFlag uFlag 100\n");
+        sb.append("jump ").append(addrDispatch).append(" equal bFlag 0\n");
 
-        // Decoder (lines 6-19)
-        sb.append("op idiv bx uFlag ").append(mapH).append("\n");
-        sb.append("op mod by uFlag ").append(mapH).append("\n");
+        // ── Decoder ──
+        sb.append("op idiv bx bFlag @maph\n");
+        sb.append("op mod by bFlag @maph\n");
         sb.append("ucontrol move bx by 0 0 0\n");
         sb.append("ucontrol within bx by 5 bNear 0\n");
         sb.append("sensor uBuilding @unit @building\n");
         sb.append("op notEqual notBuilding uBuilding 1\n");
         sb.append("op land crashed notBuilding bNear\n");
-        sb.append("jump ").append(clearAddr).append(" equal crashed 1\n");
+        sb.append("jump ").append(addrDispatch).append(" equal crashed 1\n");
         sb.append("ucontrol getBlock bx by bt bb 0\n");
-        sb.append("jump ").append(rebindAddr).append(" equal bb null\n");
+        sb.append("jump ").append(addrBind).append(" equal bb null\n");
         sb.append("sensor bbmh bb @maxHealth\n");
-        sb.append("jump ").append(rebindAddr).append(" equal bbmh 10\n");
-        sb.append("ucontrol flag 0 0 0 0 0\n");
+        sb.append("jump ").append(addrBind).append(" equal bbmh 10\n");
+        sb.append("op mod group_id uFlag 100\n");
+        sb.append("jump ").append(addrDispatch).append(" equal dist_finish null\n");
         sb.append("end\n");
 
-        // Block header (line 20)
-        sb.append("set @counter next_block\n");
-
-        // Block sections (5 lines each), start at line 21
-        for (int i = 0; i < count; i++) {
-            BuildPlan plan = plans.get(i);
-            String blockConst = "@" + plan.block.name;
-            String configStr = configToString(plan.config);
-            int rotation = plan.rotation;
-            int flag = plan.x * mapH + plan.y;
-
-            sb.append("ucontrol flag ").append(flag).append(" 0 0 0 0\n");
-            sb.append("ucontrol build ").append(plan.x).append(" ").append(plan.y).append(" ").append(blockConst).append(" ").append(rotation).append(" ").append(configStr).append("\n");
-            sb.append("ucontrol move ").append(plan.x).append(" ").append(plan.y).append(" ").append(blockConst).append(" ").append(rotation).append(" ").append(configStr).append("\n");
-
-            if (i < count - 1) {
-                sb.append("op add next_block @counter 1\n");
-            } else {
-                sb.append("set dist_finish 1\n");
-            }
-            sb.append("end\n");
+        // ── Dispatch ──
+        sb.append("op add @counter @counter group_id\n");
+        for (int i = 0; i < branchCount; i++) {
+            sb.append("set @counter group_ptr").append(i).append("\n");
         }
+        for (int i = 0; i < branchCount; i++) {
+            sb.append("set @counter block_ptr").append(i).append("\n");
+        }
+
+        // ── Block sections ──
+        int bi = 0;
+        for (int b = 0; b < branchCount; b++) {
+            BuildTreeBuilder.Branch branch = branches.get(b);
+            int blkInBranch = branch.blocks.size;
+            for (int j = 0; j < blkInBranch; j++) {
+                BuildPlan plan = branch.blocks.get(j);
+                String blockConst = "@" + plan.block.name;
+                String configStr = configToString(plan.config);
+                int rotation = plan.rotation;
+                int rawPos = plan.x * mapH + plan.y;
+
+                sb.append("ucontrol build ").append(plan.x).append(" ").append(plan.y).append(" ").append(blockConst).append(" ").append(rotation).append(" ").append(configStr).append("\n");
+                sb.append("ucontrol move ").append(plan.x).append(" ").append(plan.y).append(" 0 0 0\n");
+
+                boolean isLastBlock = (b == branchCount - 1) && (j == blkInBranch - 1);
+                boolean isBranchEnd = (j == blkInBranch - 1);
+
+                if (isLastBlock) {
+                    sb.append("set bFlag ").append(rawPos * 100).append("\n");
+                    sb.append("set dist_finish 1\n");
+                } else {
+                    if (isBranchEnd) {
+                        // Merge: next block resolved dynamically via block_ptr[target]
+                        // bFlag=0 triggers dispatch → group_ptr redirect → block_ptr
+                        sb.append("set bFlag 0\n");
+                    } else {
+                        int nextB = b, nextJ = j + 1;
+                        BuildPlan nextPlan = branches.get(nextB).blocks.get(nextJ);
+                        int rawNext = nextPlan.x * mapH + nextPlan.y;
+                        sb.append("set bFlag ").append(rawNext * 100).append("\n");
+                    }
+
+                    if (isBranchEnd) {
+                        int mergeTarget = branch.mergeToIdx;
+                        if (mergeTarget >= 0) {
+                            sb.append("set group_ptr").append(b).append(" ").append(addrDispBp + mergeTarget).append("\n");
+                        }
+                    } else {
+                        int nextBlockAddr = blockAddr[bi + 1];
+                        sb.append("set block_ptr").append(b).append(" ").append(nextBlockAddr).append("\n");
+                    }
+                    sb.append("set @counter ").append(addrCalcFlag).append("\n");
+                }
+                bi++;
+            }
+        }
+
+        // ── calc_flag ──
+        sb.append("sensor uFlag @unit @flag\n");
+        sb.append("op mod gFlag uFlag 100\n");
+        sb.append("op add newFlag gFlag bFlag\n");
+        sb.append("ucontrol flag newFlag 0 0 0 0\n");
 
         return sb.toString();
     }

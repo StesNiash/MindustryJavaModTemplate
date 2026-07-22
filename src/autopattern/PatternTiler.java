@@ -10,8 +10,8 @@ import mindustry.world.*;
 
 public class PatternTiler {
 
-    public static Seq<Tile> getConnectedOreTiles(Tile start) {
-        Item targetOre = start.drop();
+    public static Seq<Tile> getConnectedOreTiles(Tile start, int maxTiles) {
+        Item targetOre = start.overlay().itemDrop;
         if (targetOre == null) return new Seq<>();
 
         IntSet visited = new IntSet();
@@ -21,17 +21,18 @@ public class PatternTiler {
         queue.addLast(start);
         visited.add(start.pos());
 
-        while (!queue.isEmpty()) {
+        while (!queue.isEmpty() && result.size < maxTiles) {
             Tile current = queue.removeFirst();
             result.add(current);
 
             for (int dx = -1; dx <= 1; dx++) {
                 for (int dy = -1; dy <= 1; dy++) {
                     if (dx == 0 && dy == 0) continue;
-                    Tile neighbor = Vars.world.tile(current.x + dx, current.y + dy);
+                    Tile neighbor = Vars.world.tile(
+                        current.x + dx, current.y + dy);
                     if (neighbor == null) continue;
                     if (visited.contains(neighbor.pos())) continue;
-                    if (neighbor.drop() != targetOre) continue;
+                    if (neighbor.overlay().itemDrop != targetOre) continue;
 
                     visited.add(neighbor.pos());
                     queue.addLast(neighbor);
@@ -42,7 +43,8 @@ public class PatternTiler {
         return result;
     }
 
-    public static int countPlacements(Schematic pattern, Seq<Tile> oreTiles, int ox, int oy) {
+    public static int countPlacements(Schematic pattern, Seq<Tile> oreTiles,
+            int ox, int oy) {
         if (oreTiles.isEmpty()) return 0;
 
         int pw = pattern.width;
@@ -74,7 +76,8 @@ public class PatternTiler {
         return count;
     }
 
-    public static void tile(Schematic pattern, Seq<Tile> oreTiles, int ox, int oy, boolean instant) {
+    public static void tile(Schematic pattern, Seq<Tile> oreTiles,
+            int ox, int oy, boolean instant) {
         if (oreTiles.isEmpty()) return;
 
         int pw = pattern.width;
@@ -105,7 +108,8 @@ public class PatternTiler {
                 if (instant) {
                     Schematics.place(pattern, cx, cy, team, false);
                 } else {
-                    Seq<BuildPlan> plans = Vars.schematics.toPlans(pattern, cx, cy, false);
+                    Seq<BuildPlan> plans = Vars.schematics.toPlans(
+                        pattern, cx, cy, false);
                     for (BuildPlan plan : plans) {
                         Vars.player.unit().addBuild(plan);
                     }
@@ -114,11 +118,13 @@ public class PatternTiler {
         }
     }
 
-    private static boolean overlapsOre(Schematic pattern, int cx, int cy, IntSet oreSet) {
+    private static boolean overlapsOre(Schematic pattern, int cx, int cy,
+            IntSet oreSet) {
         int ox = cx - pattern.width / 2;
         int oy = cy - pattern.height / 2;
         for (Schematic.Stile st : pattern.tiles) {
-            if (oreSet.contains(Point2.pack(st.x + ox, st.y + oy))) return true;
+            if (oreSet.contains(
+                    Point2.pack(st.x + ox, st.y + oy))) return true;
         }
         return false;
     }

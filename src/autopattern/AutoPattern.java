@@ -4,6 +4,8 @@ import arc.*;
 import arc.graphics.*;
 import arc.graphics.g2d.*;
 import arc.input.*;
+import arc.math.*;
+import arc.math.geom.*;
 import arc.scene.event.*;
 import arc.scene.style.*;
 import arc.scene.ui.*;
@@ -12,12 +14,11 @@ import arc.scene.ui.layout.*;
 import arc.struct.*;
 import arc.util.*;
 import mindustry.*;
-import mindustry.game.EventType.*;
 import mindustry.game.*;
+import mindustry.game.EventType.*;
 import mindustry.gen.*;
 import mindustry.graphics.*;
 import mindustry.mod.*;
-import mindustry.type.*;
 import mindustry.ui.*;
 import mindustry.ui.dialogs.*;
 import mindustry.world.*;
@@ -33,6 +34,14 @@ public class AutoPattern extends Mod {
     private CheckBox enableBox;
     private boolean instantPlacement = true;
 
+    private float dragStartX, dragStartY;
+    private Tile dragStartTile;
+    private boolean dragging;
+    private float dragCurX, dragCurY;
+    private boolean wasMouseDown;
+    private Label hudStatusLabel;
+    private static final float MIN_DRAG = 20f;
+
     private static final String PFX = "autopattern-";
 
     public AutoPattern() {
@@ -44,9 +53,10 @@ public class AutoPattern extends Mod {
         loadSettings();
         buildDialog();
         loadSavedPattern();
-        registerTapHandler();
         registerKeybind();
+        registerDrawHook();
         buildHudButton();
+        buildStatusLabel();
         addSettings();
     }
 
@@ -56,7 +66,9 @@ public class AutoPattern extends Mod {
         Core.settings.defaults(PFX + "instant", true);
         Core.settings.defaults(PFX + "pattern", "");
         Core.settings.defaults(PFX + "show-button", true);
-        Core.settings.defaults(PFX + "activation-key", KeyCode.h.name().toUpperCase());
+        Core.settings.defaults(PFX + "activation-key",
+            KeyCode.h.name().toUpperCase());
+        Core.settings.defaults(PFX + "max-ore-tiles", 500);
         instantPlacement = Core.settings.getBool(PFX + "instant");
     }
 
@@ -181,6 +193,9 @@ public class AutoPattern extends Mod {
                     table.sliderPref(PFX + "offset-y", 0, 0, 16, 1,
                         i -> Core.bundle.format("autopattern.settings.offsety", i));
 
+                    table.sliderPref(PFX + "max-ore-tiles", 500, 50, 5000, 50,
+                        i -> Core.bundle.format("autopattern.settings.maxtiles", i));
+
                     table.checkPref(PFX + "instant", true,
                         v -> instantPlacement = v);
                 }
@@ -206,36 +221,123 @@ public class AutoPattern extends Mod {
         });
     }
 
-    private void registerTapHandler() {
-        Events.on(TapEvent.class, e -> {
-            if (!enabled || pattern == null || e.player != Vars.player) return;
+    private void registerDrawHook(){
+        Events.run(Trigger.draw, () -> {
+            boolean mouseDown = Core.input.isTouched();
 
-            Tile tile = e.tile;
-            if (tile == null) return;
-
-            Item ore = tile.drop();
-            if (ore == null) {
-                Vars.ui.showInfo("@autopattern.noore");
-                return;
+            if (mouseDown && !wasMouseDown
+                    && enabled && pattern != null
+                    && !Vars.state.isMenu()
+                    && !Core.scene.hasMouse()){
+                float wx = Core.input.mouseWorldX();
+                float wy = Core.input.mouseWorldY();
+                Tile tile = Vars.world.tileWorld(wx, wy);
+                if (tile != null
+                        && tile.overlay().itemDrop != null){
+                    dragStartX = wx;
+                    dragStartY = wy;
+                    dragCurX = wx;
+                    dragCurY = wy;
+                    dragStartTile = tile;
+                    dragging = true;
+                }
             }
 
-            Seq<Tile> oreTiles = PatternTiler.getConnectedOreTiles(tile);
-            if (oreTiles.isEmpty()) {
-                Vars.ui.showInfo("@autopattern.noore");
-                return;
+            if (dragging && mouseDown){
+                dragCurX = Core.input.mouseWorldX();
+                dragCurY = Core.input.mouseWorldY();
             }
 
-            int ox = Core.settings.getInt(PFX + "offset-x");
-            int oy = Core.settings.getInt(PFX + "offset-y");
+            if (dragging && !mouseDown && wasMouseDown){
+                dragging = false;
+                doPlacement();
+            }
 
-            PatternTiler.tile(pattern, oreTiles, ox, oy, instantPlacement);
+            if (dragging){
+                float endX = dragCurX;
+                float endY = dragCurY;
+                float dx = endX - dragStartX;
+                float dy = endY - dragStartY;
+                int rot = Math.abs(dx) + Math.abs(dy) < MIN_DRAG
+                    ? 0 : dirToRotations(dx, dy);
 
-            int count = PatternTiler.countPlacements(
-                pattern, oreTiles, ox, oy);
-            Vars.ui.showInfo(
-                Core.bundle.format("autopattern.placed", count));
+                Draw.z(Layer.overlayUI);
+                Draw.color(Pal.accent);
 
-            enabled = false;
+                Lines.stroke(2f);
+                Lines.line(dragStartX, dragStartY, endX, endY);
+
+                Fill.circle(dragStartX, dragStartY, 6f);
+
+                float ang = rot == 0 ? 90f : rot == 1 ? 180f
+                    : rot == 2 ? 270f : 0f;
+                float arrowLen = 10f;
+                float ax = endX + Mathf.cosDeg(ang) * arrowLen;
+                float ay = endY + Mathf.sinDeg(ang) * arrowLen;
+                Lines.line(endX, endY, ax, ay);
+            }
+
+            wasMouseDown = mouseDown;
+        });
+    }
+
+    private void doPlacement(){
+        float dx = dragCurX - dragStartX;
+        float dy = dragCurY - dragStartY;
+        float dist = (float)Math.sqrt(dx * dx + dy * dy);
+
+        int rotations = dist < MIN_DRAG
+            ? 0 : dirToRotations(dx, dy);
+
+        Schematic rotated = pattern;
+        if (rotations != 0){
+            rotated = Schematics.rotate(pattern, rotations);
+        }
+
+        Seq<Tile> oreTiles =
+            PatternTiler.getConnectedOreTiles(dragStartTile,
+                Core.settings.getInt(PFX + "max-ore-tiles"));
+        if (oreTiles.isEmpty()) return;
+
+        int ox = Core.settings.getInt(PFX + "offset-x");
+        int oy = Core.settings.getInt(PFX + "offset-y");
+
+        if (rotations % 2 != 0){
+            int tmp = ox;
+            ox = oy;
+            oy = tmp;
+        }
+
+        PatternTiler.tile(rotated, oreTiles, ox, oy,
+            instantPlacement);
+
+        int count = PatternTiler.countPlacements(
+            rotated, oreTiles, ox, oy);
+        Vars.ui.showInfo(
+            Core.bundle.format("autopattern.placed", count));
+
+        enabled = false;
+    }
+
+    private static int dirToRotations(float dx, float dy){
+        if (Math.abs(dx) > Math.abs(dy)){
+            return dx > 0 ? 3 : 1;
+        }else{
+            return dy > 0 ? 0 : 2;
+        }
+    }
+
+    private void buildStatusLabel(){
+        Vars.ui.hudGroup.fill(table -> {
+            hudStatusLabel = table.add("").get();
+            table.top().left();
+            table.margin(5f);
+            table.marginLeft(5f);
+        });
+
+        hudStatusLabel.update(() -> {
+            hudStatusLabel.setText(
+                enabled ? "[accent]Auto Pattern: ON[]" : "");
         });
     }
 

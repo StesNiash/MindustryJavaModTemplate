@@ -19,6 +19,18 @@ public class PatternTiler {
 
     public static final StringBuilder logBuf = new StringBuilder();
 
+    static class ExitPoint {
+        int pos;
+        int rotation;
+    }
+
+    static class GraphResult {
+        IntSet reachedPos;
+        Seq<ExitPoint> exits;
+    }
+
+    public static final Seq<ExitPoint> allExits = new Seq<>();
+
     private static void log(String fmt, Object... args) {
         String msg = args.length == 0 ? fmt : Strings.format(fmt, args);
         logBuf.append(msg).append('\n');
@@ -118,29 +130,51 @@ public class PatternTiler {
 
         int startX = minX + pw / 2 - pw;
         int startY = minY + ph / 2 - ph;
-        Team team = Vars.player.team();
 
+        Seq<Point2> positions = new Seq<>();
         for (int cx = startX; cx <= maxX + pw + pw; cx += stepX) {
             for (int cy = startY; cy <= maxY + ph + ph; cy += stepY) {
-                if (!overlapsOre(pattern, cx, cy, oreSet)) continue;
-
-                if (instant) {
-                    Schematics.place(pattern, cx, cy, team, false);
-                    removeRedundantDrills(pattern, cx, cy, oreSet,
-                        minOreTiles);
-                    cleanOrphanedInstant(pattern, cx, cy, oreSet,
-                        minOreTiles);
-                } else {
-                    Seq<BuildPlan> plans = Vars.schematics.toPlans(
-                        pattern, cx, cy, false);
-                    Seq<BuildPlan> filtered = filterOrphanedDrone(
-                        pattern, cx, cy, oreSet, minOreTiles, plans);
-                    for (BuildPlan plan : filtered) {
-                        Vars.player.unit().addBuild(plan);
-                    }
+                if (overlapsOre(pattern, cx, cy, oreSet)) {
+                    positions.add(new Point2(cx, cy));
                 }
             }
         }
+
+        if (positions.isEmpty()) return;
+
+        GraphResult combined = computeGraphMulti(
+            pattern, positions, oreSet, minOreTiles);
+
+        allExits.clear();
+        for (ExitPoint ep : combined.exits) {
+            allExits.add(ep);
+        }
+
+        Team team = Vars.player.team();
+        for (Point2 p : positions) {
+            int cx = p.x;
+            int cy = p.y;
+
+            if (instant) {
+                Schematics.place(pattern, cx, cy, team, false);
+                removeRedundantDrills(pattern, cx, cy, oreSet,
+                    minOreTiles);
+                cleanOrphanedInstant(pattern, cx, cy,
+                    combined.reachedPos);
+            } else {
+                Seq<BuildPlan> plans = Vars.schematics.toPlans(
+                    pattern, cx, cy, false);
+                Seq<BuildPlan> filtered = filterOrphanedDrone(
+                    pattern, cx, cy, oreSet, minOreTiles, plans,
+                    combined.reachedPos);
+                for (BuildPlan plan : filtered) {
+                    Vars.player.unit().addBuild(plan);
+                }
+            }
+        }
+
+        log("=== Tiling done: @ placements, @ total exits ===",
+            positions.size, allExits.size);
     }
 
     // ---- Graph-based transport analysis ----
@@ -152,7 +186,7 @@ public class PatternTiler {
         int oreCount;       // drill only
     }
 
-    private static IntSet computeReachedPositions(Schematic pattern,
+    private static GraphResult computeGraph(Schematic pattern,
             int cx, int cy, IntSet oreSet, int minOreTiles) {
         int px = cx - pattern.width / 2;
         int py = cy - pattern.height / 2;
@@ -210,7 +244,10 @@ public class PatternTiler {
 
         if (nodes.isEmpty()) {
             log("No nodes (no drills or transport)");
-            return new IntSet();
+            GraphResult empty = new GraphResult();
+            empty.reachedPos = new IntSet();
+            empty.exits = new Seq<>();
+            return empty;
         }
 
         // Build output edges
@@ -312,15 +349,241 @@ public class PatternTiler {
             }
         }
 
+        Seq<ExitPoint> exits = new Seq<>();
         for (int i = 0; i < nodes.size; i++) {
             Node n = nodes.get(i);
-            if (n.isTransport && !reached[i]) {
-                log("ORPHAN: transport #@ at (@,@) will be removed",
+            if (n.isTransport) {
+                if (!reached[i]) {
+                    log("ORPHAN: transport #@ at (@,@) will be removed",
+                        i, Point2.x(n.pos), Point2.y(n.pos));
+                } else if (outputList.get(i).isEmpty()) {
+                    ExitPoint ep = new ExitPoint();
+                    ep.pos = n.pos;
+                    ep.rotation = n.rotation;
+                    exits.add(ep);
+                    log("EXIT: transport #@ at (@,@) type=@ outDegree=0",
+                        i, Point2.x(n.pos), Point2.y(n.pos),
+                        n.isConveyor ? "conveyor" : "junction");
+                }
+            }
+            if (n.isDrill && reached[i] && outputList.get(i).isEmpty()) {
+                log("DEAD-END: drill #@ at (@,@) has no connected transport",
                     i, Point2.x(n.pos), Point2.y(n.pos));
             }
         }
 
-        return reachedPos;
+        log("Graph summary: @ nodes, @ reached, @ exits, @ orphans",
+            nodes.size,
+            countReached(reached),
+            exits.size,
+            countOrphans(nodes, reached));
+
+        GraphResult result = new GraphResult();
+        result.reachedPos = reachedPos;
+        result.exits = exits;
+        return result;
+    }
+
+    private static GraphResult computeGraphMulti(Schematic pattern,
+            Seq<Point2> positions, IntSet oreSet, int minOreTiles) {
+        Seq<Node> nodes = new Seq<>();
+        ObjectIntMap<Integer> posToNode = new ObjectIntMap<>();
+
+        log("=== Combined graph: @ positions ===", positions.size);
+
+        for (Point2 p : positions) {
+            int cx = p.x;
+            int cy = p.y;
+            int px = cx - pattern.width / 2;
+            int py = cy - pattern.height / 2;
+
+            for (Schematic.Stile st : pattern.tiles) {
+                int wx = px + st.x;
+                int wy = py + st.y;
+                int pos = Point2.pack(wx, wy);
+
+                if (posToNode.containsKey(pos)) continue;
+
+                Node n = new Node();
+                n.pos = pos;
+                n.blockSize = st.block.size;
+                n.rotation = st.rotation;
+                n.isDrill = isDrillBlock(st.block);
+                n.isTransport = isTransportBlock(st.block);
+
+                if (!n.isDrill && !n.isTransport) continue;
+
+                n.isConveyor = st.block instanceof Conveyor
+                    || st.block instanceof Duct;
+                n.isDirBridge = st.block instanceof DirectionBridge;
+
+                if (st.block instanceof ItemBridge
+                        && st.config instanceof Point2) {
+                    Point2 cfg = (Point2) st.config;
+                    n.bridgeLinkPos = Point2.pack(
+                        wx + cfg.x, wy + cfg.y);
+                }
+
+                if (n.isDrill) {
+                    n.oreCount = countDrillOreTiles(
+                        st.block, wx, wy, oreSet);
+                }
+
+                int idx = nodes.size;
+                nodes.add(n);
+                for (int dx = 0; dx < n.blockSize; dx++) {
+                    for (int dy = 0; dy < n.blockSize; dy++) {
+                        posToNode.put(
+                            Point2.pack(wx + dx, wy + dy), idx);
+                    }
+                }
+            }
+        }
+
+        log("Combined: @ nodes total", nodes.size);
+
+        if (nodes.isEmpty()) {
+            GraphResult empty = new GraphResult();
+            empty.reachedPos = new IntSet();
+            empty.exits = new Seq<>();
+            return empty;
+        }
+
+        // Build output edges
+        Seq<IntSet> outputList = new Seq<>(nodes.size);
+        for (int i = 0; i < nodes.size; i++) {
+            IntSet set = new IntSet();
+            outputList.add(set);
+            Node n = nodes.get(i);
+            int x = Point2.x(n.pos);
+            int y = Point2.y(n.pos);
+
+            if (n.isDrill) {
+                for (int e = 0; e < n.blockSize; e++) {
+                    addEdgeToTransport(posToNode, nodes, set,
+                        x - 1, y + e, i);
+                    addEdgeToTransport(posToNode, nodes, set,
+                        x + n.blockSize, y + e, i);
+                    addEdgeToTransport(posToNode, nodes, set,
+                        x + e, y - 1, i);
+                    addEdgeToTransport(posToNode, nodes, set,
+                        x + e, y + n.blockSize, i);
+                }
+            }
+
+            if (n.isConveyor) {
+                addEdgeToTransport(posToNode, nodes, set,
+                    x + D4X[n.rotation], y + D4Y[n.rotation], i);
+            }
+
+            if (n.bridgeLinkPos != 0) {
+                addEdgeToTransport(posToNode, nodes, set,
+                    n.bridgeLinkPos, i);
+            }
+
+            if (n.isDirBridge) {
+                for (int dist = 1; dist <= 4; dist++) {
+                    int sx = x + D4X[n.rotation] * dist;
+                    int sy = y + D4Y[n.rotation] * dist;
+                    int sp = Point2.pack(sx, sy);
+                    if (posToNode.containsKey(sp)) {
+                        int si = posToNode.get(sp);
+                        if (si != i && nodes.get(si).isDirBridge) {
+                            set.add(si);
+                        }
+                        break;
+                    }
+                }
+            }
+
+            if (!n.isDrill && !n.isConveyor
+                    && n.bridgeLinkPos == 0 && !n.isDirBridge) {
+                for (int dir = 0; dir < 4; dir++) {
+                    addEdgeToTransport(posToNode, nodes, set,
+                        x + D4X[dir], y + D4Y[dir], i);
+                }
+            }
+        }
+
+        // BFS from surviving drills
+        boolean[] reached = new boolean[nodes.size];
+        IntSet reachedPos = new IntSet();
+        int[] queue = new int[nodes.size];
+        int head = 0, tail = 0;
+
+        for (int i = 0; i < nodes.size; i++) {
+            Node n = nodes.get(i);
+            if (n.isDrill && n.oreCount >= minOreTiles) {
+                reached[i] = true;
+                reachedPos.add(n.pos);
+                queue[tail++] = i;
+            }
+        }
+
+        while (head < tail) {
+            int idx = queue[head++];
+            IntSet outs = outputList.get(idx);
+            IntSet.IntSetIterator it = outs.iterator();
+            while (it.hasNext) {
+                int nidx = it.next();
+                if (!reached[nidx]) {
+                    reached[nidx] = true;
+                    reachedPos.add(nodes.get(nidx).pos);
+                    queue[tail++] = nidx;
+                }
+            }
+        }
+
+        Seq<ExitPoint> exits = new Seq<>();
+        for (int i = 0; i < nodes.size; i++) {
+            Node n = nodes.get(i);
+            if (n.isTransport) {
+                if (!reached[i]) {
+                    log("ORPHAN: transport at (@,@) type=@",
+                        Point2.x(n.pos), Point2.y(n.pos),
+                        n.isConveyor ? "conveyor" : "junction");
+                } else if (outputList.get(i).isEmpty()) {
+                    ExitPoint ep = new ExitPoint();
+                    ep.pos = n.pos;
+                    ep.rotation = n.rotation;
+                    exits.add(ep);
+                    log("EXIT: transport at (@,@) rot=@ type=@",
+                        Point2.x(n.pos), Point2.y(n.pos),
+                        n.rotation,
+                        n.isConveyor ? "conveyor" : "junction");
+                }
+            }
+            if (n.isDrill && reached[i]
+                    && outputList.get(i).isEmpty()) {
+                log("DEAD-END: drill at (@,@) no connected transport",
+                    Point2.x(n.pos), Point2.y(n.pos));
+            }
+        }
+
+        log("Summary: @ nodes, @ reached, @ exits, @ orphans",
+            nodes.size,
+            countReached(reached),
+            exits.size,
+            countOrphans(nodes, reached));
+
+        GraphResult result = new GraphResult();
+        result.reachedPos = reachedPos;
+        result.exits = exits;
+        return result;
+    }
+
+    private static int countReached(boolean[] reached) {
+        int c = 0;
+        for (boolean r : reached) if (r) c++;
+        return c;
+    }
+
+    private static int countOrphans(Seq<Node> nodes, boolean[] reached) {
+        int c = 0;
+        for (int i = 0; i < nodes.size; i++) {
+            if (nodes.get(i).isTransport && !reached[i]) c++;
+        }
+        return c;
     }
 
     private static void addEdgeToTransport(ObjectIntMap<Integer> posToNode,
@@ -347,12 +610,9 @@ public class PatternTiler {
     // ---- Instant mode ----
 
     private static void cleanOrphanedInstant(Schematic pattern,
-            int cx, int cy, IntSet oreSet, int minOreTiles) {
+            int cx, int cy, IntSet reached) {
         int px = cx - pattern.width / 2;
         int py = cy - pattern.height / 2;
-
-        IntSet reached = computeReachedPositions(
-            pattern, cx, cy, oreSet, minOreTiles);
 
         for (Schematic.Stile st : pattern.tiles) {
             if (!isTransportBlock(st.block)) continue;
@@ -368,9 +628,7 @@ public class PatternTiler {
 
     private static Seq<BuildPlan> filterOrphanedDrone(Schematic pattern,
             int cx, int cy, IntSet oreSet, int minOreTiles,
-            Seq<BuildPlan> plans) {
-        IntSet reached = computeReachedPositions(
-            pattern, cx, cy, oreSet, minOreTiles);
+            Seq<BuildPlan> plans, IntSet reached) {
 
         Seq<BuildPlan> keep = new Seq<>();
         for (BuildPlan plan : plans) {

@@ -725,6 +725,24 @@ public class PatternTiler {
         return Vars.content.block("bridge-conveyor");
     }
 
+    private static int findNearestOccupied(int px, int py,
+            IntSet occupied) {
+        int best = -1;
+        int bestDist = Integer.MAX_VALUE;
+        IntSet.IntSetIterator it = occupied.iterator();
+        while (it.hasNext) {
+            int sp = it.next();
+            int sx = Point2.x(sp);
+            int sy = Point2.y(sp);
+            int d = Math.abs(sx - px) + Math.abs(sy - py);
+            if (d < bestDist) {
+                bestDist = d;
+                best = sp;
+            }
+        }
+        return best;
+    }
+
     public static void connectExits(Seq<ExitPoint> exits,
             int targetX, int targetY, boolean instant,
             Block bridgeBlock, Team team) {
@@ -744,6 +762,7 @@ public class PatternTiler {
             return Integer.compare(da, db);
         });
 
+        boolean first = true;
         for (ExitPoint exit : exits) {
             int x = Point2.x(exit.pos);
             int y = Point2.y(exit.pos);
@@ -756,47 +775,52 @@ public class PatternTiler {
                 continue;
             }
 
+            int goalX, goalY;
+            if (first) {
+                goalX = targetX;
+                goalY = targetY;
+                first = false;
+            } else {
+                int near = findNearestOccupied(x, y, occupied);
+                if (near >= 0) {
+                    goalX = Point2.x(near);
+                    goalY = Point2.y(near);
+                    log("  merge target nearest occupied (@,@)", goalX, goalY);
+                } else {
+                    goalX = targetX;
+                    goalY = targetY;
+                }
+            }
+
             int steps = 0;
             while (steps < 100) {
-                int dx = Integer.signum(targetX - x);
-                int dy = Integer.signum(targetY - y);
+                int dx = Integer.signum(goalX - x);
+                int dy = Integer.signum(goalY - y);
 
                 if (dx == 0 && dy == 0) {
-                    log("  reached target");
+                    log("  reached goal");
                     break;
                 }
 
                 int nextX, nextY, dir;
+                int remX = Math.abs(goalX - x);
+                int remY = Math.abs(goalY - y);
 
-                if (Math.abs(targetX - x) >= Math.abs(targetY - y)
-                        && dx != 0) {
-                    nextX = x + dx * range;
+                if (remX >= remY && dx != 0) {
+                    int step = Math.min(remX, range);
+                    nextX = x + dx * step;
                     nextY = y;
                     dir = dx > 0 ? 0 : 2;
                 } else if (dy != 0) {
+                    int step = Math.min(remY, range);
                     nextX = x;
-                    nextY = y + dy * range;
+                    nextY = y + dy * step;
                     dir = dy > 0 ? 1 : 3;
                 } else {
                     break;
                 }
 
-                boolean overshoot = false;
-                if (dx > 0 && nextX > targetX) overshoot = true;
-                if (dx < 0 && nextX < targetX) overshoot = true;
-                if (dy > 0 && nextY > targetY) overshoot = true;
-                if (dy < 0 && nextY < targetY) overshoot = true;
-
-                if (overshoot) {
-                    log("  overshoot, stop at (@,@)", x, y);
-                    break;
-                }
-
                 int curPos = Point2.pack(x, y);
-                if (occupied.contains(curPos)) {
-                    log("  (@,@) occupied, merge", x, y);
-                    break;
-                }
 
                 Tile st = Vars.world.tile(x, y);
                 if (st != null && st.build != null
@@ -807,10 +831,17 @@ public class PatternTiler {
                     break;
                 }
 
+                if (occupied.contains(curPos)) {
+                    log("  (@,@) occupied, merge", x, y);
+                    break;
+                }
+
                 placeBridge(x, y, nextX, nextY, dir,
                     bridgeBlock, team, instant);
                 occupied.add(curPos);
-                log("  bridge (@,@) -> (@,@)", x, y, nextX, nextY);
+                log("  bridge (@,@) -> (@,@) step=@",
+                    x, y, nextX, nextY,
+                    Math.abs(nextX - x) + Math.abs(nextY - y));
 
                 x = nextX;
                 y = nextY;
@@ -818,43 +849,7 @@ public class PatternTiler {
             }
         }
 
-        int targetPos = Point2.pack(targetX, targetY);
-        if (!occupied.contains(targetPos)) {
-            int bestPos = -1;
-            int bestDist = Integer.MAX_VALUE;
-
-            IntSet.IntSetIterator it = occupied.iterator();
-            while (it.hasNext) {
-                int sp = it.next();
-                int sx = Point2.x(sp);
-                int sy = Point2.y(sp);
-                if (sx != targetX && sy != targetY) continue;
-                int dist = Math.abs(sx - targetX) + Math.abs(sy - targetY);
-                if (dist > 0 && dist <= range && dist < bestDist) {
-                    bestDist = dist;
-                    bestPos = sp;
-                }
-            }
-
-            if (bestPos >= 0) {
-                int sx = Point2.x(bestPos);
-                int sy = Point2.y(bestPos);
-                int dir;
-                if (targetX > sx) dir = 0;
-                else if (targetX < sx) dir = 2;
-                else if (targetY > sy) dir = 1;
-                else dir = 3;
-                placeBridge(sx, sy, targetX, targetY, dir,
-                    bridgeBlock, team, instant);
-                occupied.add(targetPos);
-                log("target bridge (@,@) -> (@,@)", sx, sy, targetX, targetY);
-            } else {
-                log("target (@,@) not reachable via bridge",
-                    targetX, targetY);
-            }
-        }
-
-        log("connectExits done");
+        log("connectExits done: @ bridges", occupied.size);
     }
 
     private static void placeBridge(int x, int y, int linkX, int linkY,

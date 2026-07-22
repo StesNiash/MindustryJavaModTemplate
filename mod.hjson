@@ -6,3 +6,5 @@ description: "Automatically tile a schematic pattern over ore patches for effici
 version: 1.0
 minGameVersion: 154
 java: true
+
+hidden: true

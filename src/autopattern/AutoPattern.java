@@ -229,6 +229,19 @@ public class AutoPattern extends Mod {
                 if (Vars.ui.chatfrag.shown()) return false;
                 if (Core.scene.hasKeyboard()) return false;
 
+                if (Core.input.ctrl() && Core.input.shift()
+                        && keycode == KeyCode.c) {
+                    String log = PatternTiler.logBuf.toString();
+                    if (log.isEmpty()) {
+                        Vars.ui.showInfo("Auto Pattern: log empty");
+                    } else {
+                        Core.app.setClipboardText(log);
+                        Vars.ui.showInfo("Auto Pattern: log copied");
+                        PatternTiler.clearLog();
+                    }
+                    return true;
+                }
+
                 String configured =
                     Core.settings.getString(PFX + "activation-key");
                 if (configured.equalsIgnoreCase(keycode.name())){

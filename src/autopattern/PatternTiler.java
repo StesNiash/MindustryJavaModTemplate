@@ -7,6 +7,7 @@ import mindustry.entities.units.*;
 import mindustry.game.*;
 import mindustry.type.*;
 import mindustry.world.*;
+import mindustry.world.blocks.production.*;
 
 public class PatternTiler {
 
@@ -77,7 +78,7 @@ public class PatternTiler {
     }
 
     public static void tile(Schematic pattern, Seq<Tile> oreTiles,
-            int ox, int oy, boolean instant) {
+            int ox, int oy, int minOreTiles, boolean instant) {
         if (oreTiles.isEmpty()) return;
 
         int pw = pattern.width;
@@ -101,19 +102,49 @@ public class PatternTiler {
         int startY = minY + ph / 2;
         Team team = Vars.player.team();
 
-        for (int cx = startX; cx <= maxX + pw; cx += stepX) {
-            for (int cy = startY; cy <= maxY + ph; cy += stepY) {
-                if (!overlapsOre(pattern, cx, cy, oreSet)) continue;
-
-                if (instant) {
+        if (instant) {
+            for (int cx = startX; cx <= maxX + pw; cx += stepX) {
+                for (int cy = startY; cy <= maxY + ph; cy += stepY) {
+                    if (!overlapsOre(pattern, cx, cy, oreSet)) continue;
                     Schematics.place(pattern, cx, cy, team, false);
-                } else {
+                    removeRedundantDrills(pattern, cx, cy, oreSet,
+                        minOreTiles);
+                }
+            }
+        } else {
+            for (int cx = startX; cx <= maxX + pw; cx += stepX) {
+                for (int cy = startY; cy <= maxY + ph; cy += stepY) {
+                    if (!overlapsOre(pattern, cx, cy, oreSet)) continue;
                     Seq<BuildPlan> plans = Vars.schematics.toPlans(
                         pattern, cx, cy, false);
+                    int worldOX = cx - pw / 2;
+                    int worldOY = cy - ph / 2;
                     for (BuildPlan plan : plans) {
+                        if (isDrillBlock(plan.block)
+                                && countDrillOreTiles(plan.block,
+                                    plan.x, plan.y, oreSet) < minOreTiles) {
+                            continue;
+                        }
                         Vars.player.unit().addBuild(plan);
                     }
                 }
+            }
+        }
+    }
+
+    private static void removeRedundantDrills(Schematic pattern,
+            int cx, int cy, IntSet oreSet, int minOreTiles) {
+        int ox = cx - pattern.width / 2;
+        int oy = cy - pattern.height / 2;
+        for (Schematic.Stile st : pattern.tiles) {
+            if (!isDrillBlock(st.block)) continue;
+            int wx = ox + st.x;
+            int wy = oy + st.y;
+            if (countDrillOreTiles(st.block, wx, wy, oreSet)
+                    >= minOreTiles) continue;
+            Tile tile = Vars.world.tile(wx, wy);
+            if (tile != null && tile.build != null) {
+                tile.build.kill();
             }
         }
     }
@@ -127,5 +158,22 @@ public class PatternTiler {
                     Point2.pack(st.x + ox, st.y + oy))) return true;
         }
         return false;
+    }
+
+    private static boolean isDrillBlock(Block block) {
+        return block instanceof Drill
+            || block.name.toLowerCase().contains("drill");
+    }
+
+    private static int countDrillOreTiles(Block block, int wx, int wy,
+            IntSet oreSet) {
+        int count = 0;
+        for (int dx = 0; dx < block.size; dx++) {
+            for (int dy = 0; dy < block.size; dy++) {
+                if (oreSet.contains(
+                        Point2.pack(wx + dx, wy + dy))) count++;
+            }
+        }
+        return count;
     }
 }

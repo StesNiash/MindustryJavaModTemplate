@@ -69,6 +69,7 @@ public class AutoPattern extends Mod {
         Core.settings.defaults(PFX + "activation-key",
             KeyCode.h.name().toUpperCase());
         Core.settings.defaults(PFX + "max-ore-tiles", 500);
+        Core.settings.defaults(PFX + "min-ore-tiles", 1);
         instantPlacement = Core.settings.getBool(PFX + "instant");
     }
 
@@ -134,6 +135,21 @@ public class AutoPattern extends Mod {
 
             t.label(() -> "@autopattern.offsethelp").pad(4).row();
 
+            t.table(mo -> {
+                mo.add("@autopattern.minoretiles").padRight(4);
+
+                TextField moField = new TextField(
+                    String.valueOf(Core.settings.getInt(PFX + "min-ore-tiles")));
+                moField.setFilter(TextFieldFilter.digitsOnly);
+                moField.changed(() -> {
+                    try {
+                        Core.settings.put(PFX + "min-ore-tiles",
+                            Integer.parseInt(moField.getText()));
+                    } catch (NumberFormatException ignored) {}
+                });
+                mo.add(moField).width(60);
+            }).pad(4).row();
+
             t.table(m -> {
                 m.add("@autopattern.mode").padRight(4);
 
@@ -195,6 +211,9 @@ public class AutoPattern extends Mod {
 
                     table.sliderPref(PFX + "max-ore-tiles", 500, 50, 5000, 50,
                         i -> Core.bundle.format("autopattern.settings.maxtiles", i));
+
+                    table.sliderPref(PFX + "min-ore-tiles", 1, 1, 50, 1,
+                        i -> Core.bundle.format("autopattern.settings.minoretiles", i));
 
                     table.checkPref(PFX + "instant", true,
                         v -> instantPlacement = v);
@@ -308,8 +327,10 @@ public class AutoPattern extends Mod {
             oy = tmp;
         }
 
+        int minOreTiles = Core.settings.getInt(PFX + "min-ore-tiles");
+
         PatternTiler.tile(rotated, oreTiles, ox, oy,
-            instantPlacement);
+            minOreTiles, instantPlacement);
 
         int count = PatternTiler.countPlacements(
             rotated, oreTiles, ox, oy);

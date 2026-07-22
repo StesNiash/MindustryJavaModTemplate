@@ -93,6 +93,12 @@ jar{
     from("assets/"){
         include "**"
     }
+
+    into("bundles"){
+        from("bundles/"){
+            include "**"
+        }
+    }
 }
 
 tasks.register('deploy', Jar){

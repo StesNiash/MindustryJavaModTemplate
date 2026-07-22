@@ -3,6 +3,8 @@ package autopattern;
 import arc.*;
 import arc.graphics.*;
 import arc.graphics.g2d.*;
+import arc.input.*;
+import arc.scene.event.*;
 import arc.scene.style.*;
 import arc.scene.ui.*;
 import arc.scene.ui.TextField.*;
@@ -39,16 +41,13 @@ public class AutoPattern extends Mod {
 
     @Override
     public void init() {
-        Log.info("[AutoPattern] init() start.");
-
         loadSettings();
         buildDialog();
         loadSavedPattern();
         registerTapHandler();
+        registerKeybind();
         buildHudButton();
         addSettings();
-
-        Log.info("[AutoPattern] init() done.");
     }
 
     private void loadSettings() {
@@ -57,6 +56,7 @@ public class AutoPattern extends Mod {
         Core.settings.defaults(PFX + "instant", true);
         Core.settings.defaults(PFX + "pattern", "");
         Core.settings.defaults(PFX + "show-button", true);
+        Core.settings.defaults(PFX + "activation-key", KeyCode.h.name().toUpperCase());
         instantPlacement = Core.settings.getBool(PFX + "instant");
     }
 
@@ -146,10 +146,6 @@ public class AutoPattern extends Mod {
         });
 
         dialog.shown(this::updateStatus);
-
-        Time.runTask(60f, () -> {
-            if (dialog != null) dialog.show();
-        });
     }
 
     private void buildHudButton() {
@@ -177,6 +173,9 @@ public class AutoPattern extends Mod {
                 table -> {
                     table.checkPref(PFX + "show-button", true);
 
+                    table.textPref(PFX + "activation-key",
+                        KeyCode.h.name().toUpperCase());
+
                     table.sliderPref(PFX + "offset-x", 0, 0, 16, 1,
                         i -> Core.bundle.format("autopattern.settings.offsetx", i));
                     table.sliderPref(PFX + "offset-y", 0, 0, 16, 1,
@@ -186,6 +185,25 @@ public class AutoPattern extends Mod {
                         v -> instantPlacement = v);
                 }
             ));
+    }
+
+    private void registerKeybind() {
+        Core.scene.addListener(new InputListener(){
+            @Override
+            public boolean keyDown(InputEvent event, KeyCode keycode){
+                if (Vars.state.isMenu()) return false;
+                if (Vars.ui.chatfrag.shown()) return false;
+                if (Core.scene.hasKeyboard()) return false;
+
+                String configured =
+                    Core.settings.getString(PFX + "activation-key");
+                if (configured.equalsIgnoreCase(keycode.name())){
+                    enabled = !enabled;
+                    return true;
+                }
+                return false;
+            }
+        });
     }
 
     private void registerTapHandler() {

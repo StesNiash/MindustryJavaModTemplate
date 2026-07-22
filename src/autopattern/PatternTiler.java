@@ -65,12 +65,12 @@ public class PatternTiler {
             if (t.y > maxY) maxY = t.y;
         }
 
-        int startX = minX + pw / 2;
-        int startY = minY + ph / 2;
+        int startX = minX + pw / 2 - pw;
+        int startY = minY + ph / 2 - ph;
         int count = 0;
 
-        for (int cx = startX; cx <= maxX + pw; cx += stepX) {
-            for (int cy = startY; cy <= maxY + ph; cy += stepY) {
+        for (int cx = startX; cx <= maxX + pw + pw; cx += stepX) {
+            for (int cy = startY; cy <= maxY + ph + ph; cy += stepY) {
                 if (overlapsOre(pattern, cx, cy, oreSet)) count++;
             }
         }
@@ -98,13 +98,13 @@ public class PatternTiler {
             if (t.y > maxY) maxY = t.y;
         }
 
-        int startX = minX + pw / 2;
-        int startY = minY + ph / 2;
+        int startX = minX + pw / 2 - pw;
+        int startY = minY + ph / 2 - ph;
         Team team = Vars.player.team();
 
         if (instant) {
-            for (int cx = startX; cx <= maxX + pw; cx += stepX) {
-                for (int cy = startY; cy <= maxY + ph; cy += stepY) {
+            for (int cx = startX; cx <= maxX + pw + pw; cx += stepX) {
+                for (int cy = startY; cy <= maxY + ph + ph; cy += stepY) {
                     if (!overlapsOre(pattern, cx, cy, oreSet)) continue;
                     Schematics.place(pattern, cx, cy, team, false);
                     removeRedundantDrills(pattern, cx, cy, oreSet,
@@ -112,8 +112,8 @@ public class PatternTiler {
                 }
             }
         } else {
-            for (int cx = startX; cx <= maxX + pw; cx += stepX) {
-                for (int cy = startY; cy <= maxY + ph; cy += stepY) {
+            for (int cx = startX; cx <= maxX + pw + pw; cx += stepX) {
+                for (int cy = startY; cy <= maxY + ph + ph; cy += stepY) {
                     if (!overlapsOre(pattern, cx, cy, oreSet)) continue;
                     Seq<BuildPlan> plans = Vars.schematics.toPlans(
                         pattern, cx, cy, false);

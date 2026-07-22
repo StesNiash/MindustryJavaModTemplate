@@ -345,6 +345,14 @@ public class AutoPattern extends Mod {
         PatternTiler.tile(rotated, oreTiles, ox, oy,
             minOreTiles, instantPlacement);
 
+        Block bridgeBlock = PatternTiler.findBridgeBlock(rotated);
+        Tile targetTile = Vars.world.tileWorld(dragCurX, dragCurY);
+        if (bridgeBlock != null && targetTile != null) {
+            PatternTiler.connectExits(PatternTiler.allExits,
+                targetTile.x, targetTile.y,
+                instantPlacement, bridgeBlock, Vars.player.team());
+        }
+
         int count = PatternTiler.countPlacements(
             rotated, oreTiles, ox, oy);
         Vars.ui.showInfo(

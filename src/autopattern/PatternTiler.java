@@ -710,4 +710,171 @@ public class PatternTiler {
         }
         return count;
     }
+
+    // ---- Bridge connection ----
+
+    private static int manhattanDist(int packedPos, int tx, int ty) {
+        return Math.abs(Point2.x(packedPos) - tx)
+            + Math.abs(Point2.y(packedPos) - ty);
+    }
+
+    static Block findBridgeBlock(Schematic pattern) {
+        for (Schematic.Stile st : pattern.tiles) {
+            if (st.block instanceof ItemBridge) return st.block;
+        }
+        return Vars.content.block("bridge-conveyor");
+    }
+
+    public static void connectExits(Seq<ExitPoint> exits,
+            int targetX, int targetY, boolean instant,
+            Block bridgeBlock, Team team) {
+        if (exits.isEmpty() || bridgeBlock == null) return;
+
+        int range = 4;
+
+        clearLog();
+        log("=== connectExits: @ exits, target=(@,@) ===",
+            exits.size, targetX, targetY);
+
+        IntSet occupied = new IntSet();
+
+        exits.sort((a, b) -> {
+            int da = manhattanDist(a.pos, targetX, targetY);
+            int db = manhattanDist(b.pos, targetX, targetY);
+            return Integer.compare(da, db);
+        });
+
+        for (ExitPoint exit : exits) {
+            int x = Point2.x(exit.pos);
+            int y = Point2.y(exit.pos);
+
+            log("Exit at (@,@)", x, y);
+
+            int startPos = Point2.pack(x, y);
+            if (occupied.contains(startPos)) {
+                log("  start occupied, merge");
+                continue;
+            }
+
+            int steps = 0;
+            while (steps < 100) {
+                int dx = Integer.signum(targetX - x);
+                int dy = Integer.signum(targetY - y);
+
+                if (dx == 0 && dy == 0) {
+                    log("  reached target");
+                    break;
+                }
+
+                int nextX, nextY, dir;
+
+                if (Math.abs(targetX - x) >= Math.abs(targetY - y)
+                        && dx != 0) {
+                    nextX = x + dx * range;
+                    nextY = y;
+                    dir = dx > 0 ? 0 : 2;
+                } else if (dy != 0) {
+                    nextX = x;
+                    nextY = y + dy * range;
+                    dir = dy > 0 ? 1 : 3;
+                } else {
+                    break;
+                }
+
+                boolean overshoot = false;
+                if (dx > 0 && nextX > targetX) overshoot = true;
+                if (dx < 0 && nextX < targetX) overshoot = true;
+                if (dy > 0 && nextY > targetY) overshoot = true;
+                if (dy < 0 && nextY < targetY) overshoot = true;
+
+                if (overshoot) {
+                    log("  overshoot, stop at (@,@)", x, y);
+                    break;
+                }
+
+                int curPos = Point2.pack(x, y);
+                if (occupied.contains(curPos)) {
+                    log("  (@,@) occupied, merge", x, y);
+                    break;
+                }
+
+                Tile st = Vars.world.tile(x, y);
+                if (st != null && st.build != null
+                        && st.build.block != null
+                        && st.build.block instanceof ItemBridge) {
+                    log("  (@,@) existing bridge, merge", x, y);
+                    occupied.add(curPos);
+                    break;
+                }
+
+                placeBridge(x, y, nextX, nextY, dir,
+                    bridgeBlock, team, instant);
+                occupied.add(curPos);
+                log("  bridge (@,@) -> (@,@)", x, y, nextX, nextY);
+
+                x = nextX;
+                y = nextY;
+                steps++;
+            }
+        }
+
+        int targetPos = Point2.pack(targetX, targetY);
+        if (!occupied.contains(targetPos)) {
+            int bestPos = -1;
+            int bestDist = Integer.MAX_VALUE;
+
+            IntSet.IntSetIterator it = occupied.iterator();
+            while (it.hasNext) {
+                int sp = it.next();
+                int sx = Point2.x(sp);
+                int sy = Point2.y(sp);
+                if (sx != targetX && sy != targetY) continue;
+                int dist = Math.abs(sx - targetX) + Math.abs(sy - targetY);
+                if (dist > 0 && dist <= range && dist < bestDist) {
+                    bestDist = dist;
+                    bestPos = sp;
+                }
+            }
+
+            if (bestPos >= 0) {
+                int sx = Point2.x(bestPos);
+                int sy = Point2.y(bestPos);
+                int dir;
+                if (targetX > sx) dir = 0;
+                else if (targetX < sx) dir = 2;
+                else if (targetY > sy) dir = 1;
+                else dir = 3;
+                placeBridge(sx, sy, targetX, targetY, dir,
+                    bridgeBlock, team, instant);
+                occupied.add(targetPos);
+                log("target bridge (@,@) -> (@,@)", sx, sy, targetX, targetY);
+            } else {
+                log("target (@,@) not reachable via bridge",
+                    targetX, targetY);
+            }
+        }
+
+        log("connectExits done");
+    }
+
+    private static void placeBridge(int x, int y, int linkX, int linkY,
+            int dir, Block bridgeBlock, Team team, boolean instant) {
+        int offsetX = linkX - x;
+        int offsetY = linkY - y;
+        Point2 config = new Point2(offsetX, offsetY);
+
+        if (instant) {
+            Tile tile = Vars.world.tile(x, y);
+            if (tile != null) {
+                tile.setNet(bridgeBlock, team, dir);
+                if (tile.build != null) {
+                    tile.build.configure(config);
+                }
+            }
+        } else {
+            BuildPlan plan = new BuildPlan(x, y, dir,
+                bridgeBlock, config);
+            Vars.player.unit().addBuild(plan);
+        }
+    }
 }

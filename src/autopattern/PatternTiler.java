@@ -802,23 +802,45 @@ public class PatternTiler {
                     break;
                 }
 
-                int nextX, nextY, dir;
                 int remX = Math.abs(goalX - x);
                 int remY = Math.abs(goalY - y);
 
-                if (remX >= remY && dx != 0) {
-                    int step = Math.min(remX, range);
-                    nextX = x + dx * step;
-                    nextY = y;
-                    dir = dx > 0 ? 0 : 2;
-                } else if (dy != 0) {
-                    int step = Math.min(remY, range);
-                    nextX = x;
-                    nextY = y + dy * step;
-                    dir = dy > 0 ? 1 : 3;
-                } else {
+                int bestNextX = 0, bestNextY = 0, bestDir = -1;
+                int bestStep = 0;
+
+                // try preferred direction, then perpendicular
+                int[][] dirChecks = (remX >= remY)
+                    ? new int[][]{{dx, 0}, {0, dy}}
+                    : new int[][]{{0, dy}, {dx, 0}};
+
+                for (int[] dc : dirChecks) {
+                    int ddx = dc[0], ddy = dc[1];
+                    if (ddx == 0 && ddy == 0) continue;
+                    int step = Math.min(
+                        ddx != 0 ? remX : remY, range);
+                    int nx = x + ddx * step;
+                    int ny = y + ddy * step;
+                    int dir = ddx > 0 ? 0 : ddx < 0 ? 2
+                        : ddy > 0 ? 1 : 3;
+
+                    if (canPlaceAt(x, y) && canPlaceAt(nx, ny)) {
+                        bestNextX = nx;
+                        bestNextY = ny;
+                        bestDir = dir;
+                        bestStep = step;
+                        break;
+                    }
+                    log("  blocked: (@,@)->(@,@)", x, y, nx, ny);
+                }
+
+                if (bestDir < 0) {
+                    log("  no valid direction from (@,@)", x, y);
                     break;
                 }
+
+                int nextX = bestNextX;
+                int nextY = bestNextY;
+                int dir = bestDir;
 
                 int curPos = Point2.pack(x, y);
 
@@ -850,6 +872,17 @@ public class PatternTiler {
         }
 
         log("connectExits done: @ bridges", occupied.size);
+    }
+
+    private static boolean canPlaceAt(int x, int y) {
+        Tile tile = Vars.world.tile(x, y);
+        if (tile == null) return false;
+        Building build = tile.build;
+        if (build != null && build.block != null
+                && !(build.block instanceof ItemBridge)) {
+            return false;
+        }
+        return true;
     }
 
     private static void placeBridge(int x, int y, int linkX, int linkY,
